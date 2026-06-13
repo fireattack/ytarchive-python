@@ -14,14 +14,14 @@ from utils import (
     DTYPE_AUDIO, DTYPE_VIDEO, AUDIO_ITAG, AUDIO_ONLY_QUALITY,
     DEFAULT_POLL_TIME, DEFAULT_THREADS,
     DEFAULT_FRAG_MAX_TRIES, LIVE_MAXIMUM_SEEKABLE, ACTION_ASK, LogDebug, LogError, LogGeneral, LogInfo, LogWarn, SecondsToDurationAndTimeStr, GetYesNo,
-    DownloadData, TryDelete, RemoveAtoms, GetUrlsFromManifest, IsFragmented,
+    TryDelete, RemoveAtoms, IsFragmented,
     VideoQualities, VideoLabelItags, Contains,
     session,
 )
 
 from player_response import (
     YTCFG, GetPlayablePlayerResponse,
-    DownloadWebAPIPlayerResponse, pr_adaptive_formats, pr_dash_manifest_url, pr_is_live_now,
+    pr_adaptive_formats, pr_is_live_now,
     pr_start_timestamp, pr_thumbnail_url, pr_streaming_data,
     pr_live_broadcast_details, pr_microformat,
     PLAYER_RESPONSE_NOT_FOUND, PLAYER_RESPONSE_NOT_USABLE,
@@ -870,16 +870,10 @@ def parse_start_delay(di: DownloadInfo, val: str):
 # URL Source Fallback Chain
 # ---------------------------------------------------------------------------
 
-def get_download_urls(di: DownloadInfo, pr: Optional[dict]) -> dict:
-    """Get download URLs from all available sources with priority:
-    1. yt-dlp adaptive formats
-    2. yt-dlp DASH formats
-    3. Web API DASH manifest
-    4. Web page DASH manifest
-    """
+def get_download_urls(di: DownloadInfo) -> dict:
+    """Get download URLs from yt-dlp."""
     urls = {}
 
-    # Priority 1: yt-dlp
     json_data = execute_ytdlp_with_retry(di, 3)
     if json_data:
         adaptive_urls, dash_urls, ytdlp_last_sq = parse_ytdlp_json(json_data)
@@ -897,35 +891,7 @@ def get_download_urls(di: DownloadInfo, pr: Optional[dict]) -> dict:
                 di.LastSq = ytdlp_last_sq
             return urls
 
-    # Priority 2: Web API DASH manifest (requires PO token)
-    if di.PoToken:
-        LogDebug("yt-dlp not available or failed, trying Web API DASH manifest")
-        web_pr = DownloadWebAPIPlayerResponse(di)
-        if web_pr:
-            dash_url = pr_dash_manifest_url(web_pr)
-            if dash_url:
-                LogDebug("Retrieving URLs from Web API DASH manifest")
-                manifest = DownloadData(dash_url)
-                if manifest:
-                    dash_urls, last_sq = GetUrlsFromManifest(manifest, di.PoToken)
-                    if last_sq > di.LastSq:
-                        di.LastSq = last_sq
-                    urls.update(dash_urls)
-
-    # Priority 3: Web page DASH manifest
-    if pr:
-        dash_url = pr_dash_manifest_url(pr)
-        if dash_url:
-            LogDebug("Retrieving URLs from web page DASH manifest")
-            manifest = DownloadData(dash_url)
-            if manifest:
-                dash_urls, last_sq = GetUrlsFromManifest(manifest, di.PoToken)
-                if last_sq > di.LastSq:
-                    di.LastSq = last_sq
-                for itag, url in dash_urls.items():
-                    if itag not in urls:
-                        urls[itag] = url
-
+    LogError("Failed to get download URLs from yt-dlp")
     return urls
 
 
@@ -968,7 +934,7 @@ def get_video_info(di: DownloadInfo) -> bool:
         if target_dur > 0:
             di.TargetDuration = target_dur
 
-    dl_urls = get_download_urls(di, pr)
+    dl_urls = get_download_urls(di)
 
     if not dl_urls:
         LogError("No download URLs found")

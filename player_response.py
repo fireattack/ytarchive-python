@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from utils import (
-    DownloadData, GetVideoIdFromWatchPage, GenerateSAPISIDHash,
-    LogDebug, LogError, LogGeneral, LogWarn, LogTrace,
-    LogInfo, session, DEFAULT_POLL_TIME,
+    DownloadData, GetVideoIdFromWatchPage, LogDebug, LogError, LogGeneral, LogWarn, LogInfo, session, DEFAULT_POLL_TIME,
     VideoQualities, ParseQualitySelection, GetQualityFromUser,
     IsFragmented, LOGLEVEL_QUIET,
     ACTION_ASK, ACTION_DO_NOT,
@@ -27,25 +25,6 @@ PLAYABLE_ERROR = "ERROR"
 PLAYER_RESPONSE_FOUND = 0
 PLAYER_RESPONSE_NOT_FOUND = 1
 PLAYER_RESPONSE_NOT_USABLE = 2
-
-WEB_API_POST_DATA = """{
-    "context": {
-        "client": {
-            "clientName": "%s",
-            "clientVersion": "%s",
-            "hl": "en"
-        }
-    },
-    "videoId": "%s",
-    "playbackContext": {
-        "contentPlaybackContext": {
-            "html5Preference": "HTML5_PREF_WANTS"
-        }
-    },
-    "serviceIntegrityDimensions": {
-        "poToken": "%s"
-    }
-}"""
 
 # ---------------------------------------------------------------------------
 # Data Classes
@@ -324,67 +303,6 @@ def _get_newest_stream_from_streams(di) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Web API Player Response
 # ---------------------------------------------------------------------------
-
-def DownloadWebAPIPlayerResponse(di) -> Optional[dict]:
-    """Download player response via YouTube's Web API (requires PO token)."""
-    if not di.PoToken:
-        LogDebug("Cannot retrieve web API player response without a PO Token set")
-        return None
-
-    auth = ""
-    if di.CookiesURL:
-        auth = GenerateSAPISIDHash(di.CookiesURL)
-
-    ytcfg = di.Ytcfg if di.Ytcfg else GetDefaultYTCFG()
-
-    query_params = ""
-    if ytcfg.InnertubeApiKey:
-        query_params = f"?innertube_key={ytcfg.InnertubeApiKey}"
-
-    post_data = WEB_API_POST_DATA % (
-        ytcfg.InnertubeClientName,
-        ytcfg.InnertubeClientVersion,
-        di.VideoID,
-        di.PoToken,
-    )
-
-    url = f"https://www.youtube.com/youtubei/v1/player{query_params}"
-    headers = {
-        "X-YouTube-Client-Name": str(ytcfg.InnertubeCtxClientName),
-        "X-YouTube-Client-Version": ytcfg.InnertubeCtxClientVersion,
-        "Origin": "https://www.youtube.com",
-        "Content-Type": "application/json",
-    }
-
-    if auth:
-        headers["X-Origin"] = "https://www.youtube.com"
-        headers["Authorization"] = auth
-
-    if ytcfg.IdToken:
-        headers["X-Youtube-Identity-Token"] = ytcfg.IdToken
-
-    if ytcfg.DelegatedSessionId:
-        headers["X-Goog-PageId"] = ytcfg.DelegatedSessionId
-
-    visitor_data = di.VisitorData or ytcfg.VisitorData
-    if visitor_data:
-        headers["X-Goog-Visitor-Id"] = visitor_data
-
-    if ytcfg.SessionIndex:
-        headers["X-Goog-AuthUser"] = ytcfg.SessionIndex
-
-    LogTrace("POST %s", url)
-    try:
-        resp = session.post(url, data=post_data, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            LogDebug("Web API returned non-200 status code %d", resp.status_code)
-            return None
-
-        return resp.json()
-    except Exception as e:
-        LogDebug("Error getting Web API player response: %s", str(e))
-        return None
-
 
 # ---------------------------------------------------------------------------
 # Video HTML Retrieval

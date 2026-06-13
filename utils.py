@@ -1,4 +1,3 @@
-import hashlib
 import os
 import re
 import shutil
@@ -6,7 +5,6 @@ import struct
 import sys
 import time
 from typing import Optional
-from xml.etree import ElementTree
 
 import requests
 from colorama import init as colorama_init, Fore, Style
@@ -48,7 +46,6 @@ LIVE_MAXIMUM_SEEKABLE = 86400 * 7
 
 DEFAULT_THREADS = 1
 DEFAULT_FRAG_MAX_TRIES = 10
-BUFFER_SIZE = 8192
 
 DTYPE_AUDIO = "audio"
 DTYPE_VIDEO = "video"
@@ -115,10 +112,6 @@ def LogInfo(msg: str, *args):
 
 def LogDebug(msg: str, *args):
     _log(LOGLEVEL_DEBUG, msg, *args)
-
-
-def LogTrace(msg: str, *args):
-    _log(LOGLEVEL_TRACE, msg, *args)
 
 
 def SetLoglevel(level: int):
@@ -296,87 +289,6 @@ def FormatFilename(format_str: str, vals: dict, lookalike_chars: bool = False) -
 
 
 # ---------------------------------------------------------------------------
-# DASH Manifest Parsing
-# ---------------------------------------------------------------------------
-
-def GetUrlsFromManifest(manifest: bytes, po_token: str = "") -> tuple:
-    """Parse DASH manifest XML and extract download URLs.
-    Returns (urls_dict, last_sq)."""
-    urls = {}
-    last_sq = -1
-
-    try:
-        root = ElementTree.fromstring(manifest)
-    except ElementTree.ParseError as e:
-        LogDebug("Error parsing DASH manifest: %s", str(e))
-        return urls, last_sq
-
-    # Handle default namespace by registering it
-    ns_uri = "urn:mpeg:dash:schema:mpd:2011"
-    ElementTree.register_namespace("", ns_uri)
-    ns = {"dash": ns_uri}
-
-    # Also strip namespace from tag names to handle both namespaced and non-namespaced
-    def _strip_ns(tag):
-        return tag.split("}", 1)[1] if "}" in tag else tag
-
-    def _findall(element, tag):
-        """Find all elements matching tag with or without namespace."""
-        results = []
-        for el in element.iter():
-            if _strip_ns(el.tag) == tag:
-                results.append(el)
-        return results
-
-    def _find_first(element, tag):
-        """Find first element matching tag with or without namespace."""
-        for el in element.iter():
-            if _strip_ns(el.tag) == tag:
-                return el
-        return None
-
-    for period in root.findall(".//{%s}Period" % ns_uri) or _findall(root, "Period"):
-        for adapt_set in (period.findall(".//{%s}AdaptationSet" % ns_uri) or _findall(period, "AdaptationSet")):
-            for rep in (adapt_set.findall(".//{%s}Representation" % ns_uri) or _findall(adapt_set, "Representation")):
-                rep_id = rep.get("id", "")
-                try:
-                    itag = int(rep_id)
-                except (ValueError, TypeError):
-                    continue
-
-                # Get segment list for last sequence number
-                seg_list = (rep.find(".//{%s}SegmentList" % ns_uri) or
-                           _find_first(rep, "SegmentList"))
-                if seg_list is not None:
-                    seg_urls = (seg_list.findall(".//{%s}SegmentURL" % ns_uri) or
-                               _findall(seg_list, "SegmentURL"))
-                    if seg_urls:
-                        last_media = seg_urls[-1].get("media", "")
-                        parts = last_media.split("/")
-                        for i, ps in enumerate(parts):
-                            if ps == "sq" and len(parts) > i + 1:
-                                try:
-                                    sq_val = int(parts[i + 1])
-                                    if sq_val > last_sq:
-                                        last_sq = sq_val
-                                except ValueError:
-                                    pass
-                                break
-
-                # Get base URL
-                base_url_el = (rep.find(".//{%s}BaseURL" % ns_uri) or
-                              _find_first(rep, "BaseURL"))
-                if base_url_el is not None and base_url_el.text:
-                    base_url = base_url_el.text
-                    base_url = base_url.replace("%", "%%") + "sq/%d"
-                    if po_token:
-                        base_url = f"{base_url}/pot/{po_token}"
-                    urls[itag] = base_url
-
-    return urls, last_sq
-
-
-# ---------------------------------------------------------------------------
 # MP4 Atom Removal
 # ---------------------------------------------------------------------------
 
@@ -502,34 +414,6 @@ def ParseNetscapeCookiesFile(filepath: str) -> requests.cookies.RequestsCookieJa
     except Exception as e:
         LogWarn("Failed to load cookies file: %s", str(e))
     return jar
-
-
-# ---------------------------------------------------------------------------
-# SAPISID Hash
-# ---------------------------------------------------------------------------
-
-def GenerateSAPISIDHash(jar: requests.cookies.RequestsCookieJar) -> str:
-    """Generate SAPISIDHASH header value for authenticated YouTube API calls."""
-    sapisid = None
-    papisid = None
-
-    for cookie in jar:
-        if cookie.name == "SAPISID":
-            sapisid = cookie.value
-        elif cookie.name == "__Secure-3PAPISID":
-            papisid = cookie.value
-
-    if not sapisid and papisid:
-        sapisid = papisid
-
-    if not sapisid:
-        return ""
-
-    now = int(time.time())
-    hash_input = f"{now} {sapisid} https://www.youtube.com"
-    hash_bytes = hashlib.sha1(hash_input.encode("utf-8")).hexdigest()
-
-    return f"SAPISIDHASH {now}_{hash_bytes}"
 
 
 # ---------------------------------------------------------------------------

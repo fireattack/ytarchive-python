@@ -24,3 +24,9 @@ go_original/
 
 # Dev scripts
 test.bat
+
+# test video files
+*.mp4
+*.mkv
+*.webm
+*.ts
