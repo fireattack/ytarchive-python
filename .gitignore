@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+
+# Generated download state files
+*.state
+
+# Test artifacts
+*.xml
+*.html
+
+# Cookies (sensitive)
+*.txt
+!requirements.txt
+
+# Go original (archived)
+go_original/
+
+# Dev scripts
+test.bat
