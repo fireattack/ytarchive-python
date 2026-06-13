@@ -53,8 +53,6 @@ def build_argparser() -> argparse.ArgumentParser:
 
     # Network options
     net_group = parser.add_argument_group("Network Options")
-    net_group.add_argument("-4", "--ipv4", action="store_true", help="Force IPv4 connections")
-    net_group.add_argument("-6", "--ipv6", action="store_true", help="Force IPv6 connections")
     net_group.add_argument("--proxy", help="Proxy URL (http, https, socks5)")
     net_group.add_argument("-c", "--cookies", help="Netscape-format cookies.txt file")
     net_group.add_argument("--visitor-data", help="Visitor data for API requests")
