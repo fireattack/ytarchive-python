@@ -16,16 +16,10 @@ from utils import (
     DEFAULT_FRAG_MAX_TRIES, LIVE_MAXIMUM_SEEKABLE, ACTION_ASK, LogDebug, LogError, LogGeneral, LogInfo, LogWarn, SecondsToDurationAndTimeStr, GetYesNo,
     TryDelete, RemoveAtoms, IsFragmented,
     VideoQualities, VideoLabelItags, Contains,
+    ParseQualitySelection, GetQualityFromUser,
     session,
 )
 
-from player_response import (
-    YTCFG, GetPlayablePlayerResponse,
-    pr_adaptive_formats, pr_is_live_now,
-    pr_start_timestamp, pr_thumbnail_url, pr_streaming_data,
-    pr_live_broadcast_details, pr_microformat,
-    PLAYER_RESPONSE_NOT_FOUND, PLAYER_RESPONSE_NOT_USABLE,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +170,6 @@ class DownloadInfo:
         self.FormatInfo = self.NewFormatInfo()
         self.Metadata = self.NewMetaInfo()
         self.CookiesURL = None
-        self.Ytcfg: Optional[YTCFG] = None
         self.VisitorData = ""
         self.PoToken = ""
 
@@ -417,50 +410,36 @@ class DownloadInfo:
             return False
 
     # Metadata formatting
-    def SetFormatInfoFromPlayerResponse(self, pr: dict):
-        """Populate FormatInfo from a PlayerResponse dict."""
+    def SetFormatInfoFromYtdlp(self, data: dict):
+        """Populate FormatInfo from yt-dlp JSON."""
         fi = self.FormatInfo
-        video_details = pr.get("videoDetails", {})
-        microformat = pr.get("microformat", {}).get("playerMicroformatRenderer", {})
-        live_details = microformat.get("liveBroadcastDetails", {})
-
-        fi["id"] = video_details.get("videoId", self.VideoID)
-        fi["title"] = video_details.get("title", "")
-        fi["channel_id"] = video_details.get("channelId", "")
-        fi["channel"] = video_details.get("author", "")
-        fi["description"] = video_details.get("shortDescription", "")
+        fi["id"] = data.get("id", self.VideoID)
+        fi["title"] = data.get("title", "")
+        fi["channel_id"] = data.get("channel_id", "")
+        fi["channel"] = data.get("uploader", "") or data.get("channel", "")
+        fi["description"] = data.get("description", "")
         fi["url"] = self.URL
 
-        # Dates
-        publish_date = microformat.get("publishDate", "")
-        upload_date = microformat.get("uploadDate", "")
-        start_timestamp = live_details.get("startTimestamp", "")
-
-        fi["publish_date"] = publish_date
+        upload_date = data.get("upload_date", "")
         fi["upload_date"] = upload_date
-        fi["start_date"] = start_timestamp
+        fi["publish_date"] = upload_date
 
-        # Parse start_timestamp into components
-        if start_timestamp:
+        # Timestamp
+        ts = data.get("timestamp") or data.get("release_timestamp")
+        if ts:
             try:
-                # Format: "2024-01-15T12:30:00+00:00" or similar
-                dt_str = start_timestamp.replace("T", " ")[:19]
-                parts = dt_str.split(" ")[0].split("-")
-                time_parts = dt_str.split(" ")[1].split(":") if " " in dt_str else ["00", "00", "00"]
-                fi["year"] = parts[0] if len(parts) > 0 else ""
-                fi["month"] = parts[1] if len(parts) > 1 else ""
-                fi["day"] = parts[2] if len(parts) > 2 else ""
-                fi["start_time"] = f"{time_parts[0]}:{time_parts[1]}:{time_parts[2]}" if len(time_parts) > 2 else ""
-            except Exception:
-                pass
-
-        # Hours/minutes/seconds from start_time
-        if fi["start_time"]:
-            try:
-                tp = fi["start_time"].split(":")
-                fi["hours"] = tp[0] if len(tp) > 0 else ""
-                fi["minutes"] = tp[1] if len(tp) > 1 else ""
-                fi["seconds"] = tp[2] if len(tp) > 2 else ""
+                dt = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(ts))
+                fi["start_date"] = dt
+                parts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts)).split(" ")
+                ymd = parts[0].split("-") if len(parts) > 0 else []
+                hms = parts[1].split(":") if len(parts) > 1 else ["00", "00", "00"]
+                fi["year"] = ymd[0] if len(ymd) > 0 else ""
+                fi["month"] = ymd[1] if len(ymd) > 1 else ""
+                fi["day"] = ymd[2] if len(ymd) > 2 else ""
+                fi["start_time"] = ":".join(hms)
+                fi["hours"] = hms[0] if len(hms) > 0 else ""
+                fi["minutes"] = hms[1] if len(hms) > 1 else ""
+                fi["seconds"] = hms[2] if len(hms) > 2 else ""
             except Exception:
                 pass
 
@@ -472,13 +451,12 @@ class DownloadInfo:
             except (KeyError, ValueError):
                 pass
 
-    def PrintChannelAndTitle(self, pr: dict):
-        """Print channel and title info from player response."""
+    def PrintChannelAndTitle(self, data: dict):
+        """Print channel and title info from yt-dlp data."""
         if self.InfoPrinted:
             return
-        video_details = pr.get("videoDetails", {})
-        channel = video_details.get("author", "Unknown")
-        title = video_details.get("title", "Unknown")
+        channel = data.get("uploader", "") or data.get("channel", "Unknown")
+        title = data.get("title", "Unknown")
         self.InfoPrinted = True
         LogGeneral("Channel: %s", channel)
         LogGeneral("Title: %s", title)
@@ -870,195 +848,290 @@ def parse_start_delay(di: DownloadInfo, val: str):
 # URL Source Fallback Chain
 # ---------------------------------------------------------------------------
 
-def get_download_urls(di: DownloadInfo) -> dict:
-    """Get download URLs from yt-dlp."""
-    urls = {}
-
-    json_data = execute_ytdlp_with_retry(di, 3)
-    if json_data:
-        adaptive_urls, dash_urls, ytdlp_last_sq = parse_ytdlp_json(json_data)
-        if adaptive_urls:
-            LogDebug("Using yt-dlp adaptive formats as primary source")
-            urls.update(adaptive_urls)
-            if ytdlp_last_sq > 0:
-                di.LastSq = ytdlp_last_sq
-            return urls
-
-        if dash_urls:
-            LogDebug("Using yt-dlp dash formats as fallback")
-            urls.update(dash_urls)
-            if ytdlp_last_sq > 0:
-                di.LastSq = ytdlp_last_sq
-            return urls
-
-    LogError("Failed to get download URLs from yt-dlp")
-    return urls
-
-
 # ---------------------------------------------------------------------------
 # Get Video Info
 # ---------------------------------------------------------------------------
 
+def _parse_ytdlp_info(json_data: bytes) -> dict:
+    """Parse yt-dlp JSON into metadata + format URL dicts."""
+    try:
+        data = json.loads(json_data)
+    except json.JSONDecodeError as e:
+        LogDebug("Failed to parse yt-dlp JSON: %s", str(e))
+        return {}
+
+    # Extract format URLs (same logic as parse_ytdlp_json)
+    adaptive_urls, dash_urls, last_sq = parse_ytdlp_json(json_data)
+    data["_adaptive_urls"] = adaptive_urls
+    data["_dash_urls"] = dash_urls
+    data["_last_sq"] = last_sq
+
+    # Derive target duration from format fragments if available
+    for fmt in data.get("formats", []):
+        fragments = fmt.get("fragments", [])
+        if fragments:
+            dur = fragments[0].get("duration")
+            if dur:
+                data["_target_duration"] = int(dur)
+                break
+
+    return data
+
+
 def get_video_info(di: DownloadInfo) -> bool:
-    """Get necessary video info such as video/audio URLs.
+    """Get video info and download URLs from yt-dlp.
     Returns True on success."""
     with di._lock:
         if di.GVideoDDL or di.Stopping or di.Unavailable:
             return False
-
         delta = time.time() - di.LastUpdated
         if delta < DEFAULT_POLL_TIME:
             return False
 
-    retrieved, pr, sel_qualities = GetPlayablePlayerResponse(di)
+    first_wait = True
+    retry_count = 0
+    live_waited = 0
 
-    with di._lock:
-        di.LastUpdated = time.time()
+    sel_qualities = []
+    if di.SelectedQuality:
+        sel_qualities = ParseQualitySelection(VideoQualities, di.SelectedQuality)
 
-    if retrieved == PLAYER_RESPONSE_NOT_FOUND:
-        di.Live = False
-        di.Unavailable = True
-        return False
-    elif retrieved == PLAYER_RESPONSE_NOT_USABLE:
-        return False
+    while True:
+        json_data = execute_ytdlp_with_retry(di, 3)
+        if not json_data:
+            LogError("Failed to get stream info from yt-dlp")
+            di.Live = False
+            di.Unavailable = True
+            return False
 
-    stream_data = pr_streaming_data(pr)
-    adaptive_formats = pr_adaptive_formats(pr)
-    pmfr = pr_microformat(pr)
-    live_details = pr_live_broadcast_details(pr)
-    is_live = pr_is_live_now(pr)
+        data = _parse_ytdlp_info(json_data)
+        if not data:
+            LogError("Failed to parse yt-dlp output")
+            return False
 
-    # Get target duration from first adaptive format
-    if adaptive_formats:
-        target_dur = int(adaptive_formats[0].get("targetDurationSec", 0))
-        if target_dur > 0:
+        live_status = data.get("live_status", "")
+
+        # Handle scheduled / upcoming streams
+        if live_status == "is_upcoming":
+            if di.InProgress:
+                LogDebug("Stream status changed to upcoming mid-download")
+                return False
+
+            if di.LiveFromVal and di.LiveFromVal.startswith("-"):
+                LogError("Option --live-from with a negative duration is not valid for a scheduled stream.")
+                return False
+
+            if di.Wait == ACTION_DO_NOT:
+                LogError("Stream has not started, and you have opted not to wait.")
+                return False
+
+            if first_wait and di.Wait == ACTION_ASK and di.RetrySecs == 0:
+                if not di.AskWaitForStream():
+                    return False
+
+            if first_wait:
+                di.PrintChannelAndTitle(data)
+                if not sel_qualities:
+                    sel_qualities = GetQualityFromUser(VideoQualities, True)
+
+            release_ts = data.get("release_timestamp")
+            if release_ts and di.RetrySecs <= 0:
+                cur_time = int(time.time())
+                sleep_time = release_ts - cur_time
+                if sleep_time > 0:
+                    if first_wait:
+                        first_wait = False
+                    LogGeneral("Stream starts at %s in %d seconds.",
+                        time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(release_ts)), sleep_time)
+                    LogGeneral("Waiting for this time to elapse...")
+                    while sleep_time > 0:
+                        time.sleep(min(sleep_time, 60))
+                        cur_time = int(time.time())
+                        sleep_time = release_ts - cur_time
+                    continue
+
+            di.RetrySecs = di.RetrySecs or DEFAULT_POLL_TIME
+
+            if first_wait:
+                first_wait = False
+                LogGeneral("Waiting for stream, retrying every %d seconds...\n", di.RetrySecs)
+
+            time.sleep(di.RetrySecs)
+            live_waited += di.RetrySecs
+            retry_count += 1
+            import utils as _u
+            msg = "Retries: %d (Last retry: %s), Total time waited: %d seconds"
+            if not _u.status_newlines:
+                msg = "\r" + msg
+            else:
+                msg = msg + "\n"
+            sys.stderr.write(msg % (retry_count, time.strftime("%Y/%m/%d %H:%M:%S"), live_waited))
+            sys.stderr.flush()
+            continue
+
+        # Not a livestream at all
+        if live_status not in ("is_live", "was_live", "post_live"):
+            if di.Live:
+                di.Live = False
+            else:
+                LogError("%s is not a livestream. It would be better to use yt-dlp to download it.", di.URL)
+            return False
+
+        # Stream has ended and is being processed
+        if live_status in ("was_live", "post_live") and not di.InProgress:
+            if not data.get("formats"):
+                LogGeneral("Livestream has ended and is being processed. Download URLs not available.")
+                return False
+            adaptive = data.get("_adaptive_urls", {})
+            dash = data.get("_dash_urls", {})
+            if not adaptive and not dash:
+                LogGeneral("Livestream has been processed. Use yt-dlp instead.")
+                return False
+
+        # Stream is live (or was live with formats) — proceed
+        di.PrintChannelAndTitle(data)
+
+        with di._lock:
+            di.LastUpdated = time.time()
+
+        # Extract format URLs
+        dl_urls = {}
+        adaptive = data.get("_adaptive_urls", {})
+        dash = data.get("_dash_urls", {})
+        last_sq = data.get("_last_sq", -1)
+
+        if adaptive:
+            LogDebug("Using yt-dlp adaptive formats as primary source")
+            dl_urls.update(adaptive)
+            if last_sq > 0:
+                di.LastSq = last_sq
+        elif dash:
+            LogDebug("Using yt-dlp dash formats as fallback")
+            dl_urls.update(dash)
+            if last_sq > 0:
+                di.LastSq = last_sq
+
+        if not dl_urls:
+            LogError("No download URLs found")
+            return False
+
+        # Target duration
+        target_dur = data.get("_target_duration")
+        if target_dur:
             di.TargetDuration = target_dur
+            LogDebug("Target fragment duration: %ds", target_dur)
 
-    dl_urls = get_download_urls(di)
+        # Quality selection (unchanged logic)
+        if di.Quality < 0:
+            qualities = ["audio_only"]
+            found = False
 
-    if not dl_urls:
-        LogError("No download URLs found")
-        return False
+            for qlabel in VideoQualities:
+                video_itag = VideoLabelItags[qlabel]
+                vp9_ok = video_itag.VP9 in dl_urls
+                h264_ok = video_itag.H264 in dl_urls
+                av1_ok = video_itag.AV1 in dl_urls
 
-    # Quality selection
-    if di.Quality < 0:
-        # Build list of available qualities
-        qualities = ["audio_only"]
-        found = False
+                if qlabel.endswith("60"):
+                    base_quality = qlabel[:-2]
+                    if base_quality in VideoLabelItags:
+                        base_itag = VideoLabelItags[base_quality]
+                        if base_itag.AV1 == video_itag.AV1:
+                            if base_itag.H264 in dl_urls or base_itag.VP9 in dl_urls:
+                                av1_ok = False
 
-        for qlabel in VideoQualities:
-            video_itag = VideoLabelItags[qlabel]
-            vp9_ok = video_itag.VP9 in dl_urls
-            h264_ok = video_itag.H264 in dl_urls
-            av1_ok = video_itag.AV1 in dl_urls
+                if Contains(qualities, qlabel) or (not vp9_ok and not h264_ok and not av1_ok):
+                    continue
+                qualities.append(qlabel)
 
-            # 60fps fallback logic
-            if qlabel.endswith("60"):
-                base_quality = qlabel[:-2]
-                if base_quality in VideoLabelItags:
-                    base_itag = VideoLabelItags[base_quality]
-                    if base_itag.AV1 == video_itag.AV1:
-                        base_h264_ok = base_itag.H264 in dl_urls
-                        base_vp9_ok = base_itag.VP9 in dl_urls
-                        if base_h264_ok or base_vp9_ok:
-                            av1_ok = False
+            while not found:
+                if not sel_qualities:
+                    sel_qualities = GetQualityFromUser(qualities, False)
 
-            if Contains(qualities, qlabel) or (not vp9_ok and not h264_ok and not av1_ok):
-                continue
-            qualities.append(qlabel)
+                for q in sel_qualities:
+                    q = q.strip()
+                    if q == "best":
+                        q = qualities[-1]
+                    elif q == "audio":
+                        q = "audio_only"
 
-        while not found:
-            if not sel_qualities:
-                sel_qualities = GetQualityFromUser(qualities, False)
+                    video_itag = VideoLabelItags[q]
+                    aonly = video_itag.VP9 == AUDIO_ONLY_QUALITY
 
-            for q in sel_qualities:
-                q = q.strip()
-                if q == "best":
-                    q = qualities[-1]
-                elif q == "audio":
-                    q = "audio_only"
+                    if not di.VideoOnly and AUDIO_ITAG in dl_urls:
+                        di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
 
-                video_itag = VideoLabelItags[q]
-                aonly = video_itag.VP9 == AUDIO_ONLY_QUALITY
+                    if aonly:
+                        di.Quality = AUDIO_ONLY_QUALITY
+                        di.SetDownloadUrl(DTYPE_VIDEO, "")
+                        found = True
+                        break
 
-                if not di.VideoOnly and AUDIO_ITAG in dl_urls:
-                    di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
+                    codec_order = di.GetCodecPriorityOrder()
+                    LogDebug("Codec priority order: %s", ", ".join(codec_order).upper())
+                    for codec in codec_order:
+                        if codec == "h264":
+                            itag = video_itag.H264
+                        elif codec == "vp9":
+                            itag = video_itag.VP9
+                        elif codec == "av1":
+                            itag = video_itag.AV1
+                        else:
+                            continue
 
-                if aonly:
-                    di.Quality = AUDIO_ONLY_QUALITY
-                    di.SetDownloadUrl(DTYPE_VIDEO, "")
-                    found = True
-                    break
+                        if itag == AUDIO_ONLY_QUALITY:
+                            continue
 
-                codec_order = di.GetCodecPriorityOrder()
-                LogDebug("Codec priority order: %s", ", ".join(codec_order).upper())
-                for codec in codec_order:
-                    if codec == "h264":
-                        itag = video_itag.H264
-                    elif codec == "vp9":
-                        itag = video_itag.VP9
-                    elif codec == "av1":
-                        itag = video_itag.AV1
-                    else:
-                        continue
+                        if codec == "av1" and q.endswith("60"):
+                            if video_itag.AV1 in dl_urls:
+                                base_quality = q[:-2]
+                                if base_quality in VideoLabelItags:
+                                    base_itag = VideoLabelItags[base_quality]
+                                    if base_itag.AV1 == video_itag.AV1:
+                                        if base_itag.H264 in dl_urls or base_itag.VP9 in dl_urls:
+                                            LogDebug("Treating %s AV1 itag=%d as unavailable", q, video_itag.AV1)
+                                            continue
 
-                    if itag == AUDIO_ONLY_QUALITY:
-                        continue
+                        url = dl_urls.get(itag)
+                        LogDebug("Codec availability: %s itag=%d ok=%s", codec.upper(), itag, url is not None)
+                        if url is None:
+                            continue
 
-                    # 60fps AV1 fallback
-                    if codec == "av1" and q.endswith("60"):
-                        if video_itag.AV1 in dl_urls:
-                            base_quality = q[:-2]
-                            if base_quality in VideoLabelItags:
-                                base_itag = VideoLabelItags[base_quality]
-                                if base_itag.AV1 == video_itag.AV1:
-                                    base_h264_ok = base_itag.H264 in dl_urls
-                                    base_vp9_ok = base_itag.VP9 in dl_urls
-                                    if base_h264_ok or base_vp9_ok:
-                                        LogDebug("Treating %s AV1 itag=%d as unavailable", q, video_itag.AV1)
-                                        continue
+                        di.SetDownloadUrl(DTYPE_VIDEO, url)
+                        di.Quality = itag
+                        found = True
+                        LogGeneral("Selected quality: %s (%s)", q, codec.upper())
+                        break
+                    if found:
+                        break
 
-                    url = dl_urls.get(itag)
-                    LogDebug("Codec availability: %s itag=%d ok=%s", codec.upper(), itag, url is not None)
-                    if url is None:
-                        continue
+                if not found:
+                    LogGeneral("The qualities you selected ended up unavailable for this stream")
+                    LogGeneral("You will now have the option to select from the available qualities")
+                    sel_qualities = []
+        else:
+            aonly = di.Quality == AUDIO_ONLY_QUALITY
+            if not di.VideoOnly and AUDIO_ITAG in dl_urls and IsFragmented(dl_urls.get(AUDIO_ITAG, "")):
+                di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
+            if not aonly:
+                vid_ok = di.Quality in dl_urls
+                if vid_ok and IsFragmented(dl_urls.get(di.Quality, "")):
+                    di.SetDownloadUrl(DTYPE_VIDEO, dl_urls[di.Quality])
 
-                    di.SetDownloadUrl(DTYPE_VIDEO, url)
-                    di.Quality = itag
-                    found = True
-                    LogGeneral("Selected quality: %s (%s)\n", q, codec.upper())
-                    break
-                if found:
-                    break
+        if not di.InProgress:
+            timestamp = data.get("timestamp") or data.get("release_timestamp")
+            if timestamp:
+                LogGeneral("Stream started at time %s",
+                    time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(timestamp)))
+            di.SetFormatInfoFromYtdlp(data)
+            di.SetMetadataFromFormatInfo()
+            thumb_url = data.get("thumbnail", "")
+            if thumb_url:
+                di.Thumbnail = thumb_url
+            di.InProgress = True
 
-            if not found:
-                LogGeneral("The qualities you selected ended up unavailable for this stream")
-                LogGeneral("You will now have the option to select from the available qualities")
-                sel_qualities = []
-    else:
-        # Quality already set (from command line --video-url or --audio-url)
-        aonly = di.Quality == AUDIO_ONLY_QUALITY
-        audio_ok = AUDIO_ITAG in dl_urls
-
-        if not di.VideoOnly and audio_ok and IsFragmented(dl_urls.get(AUDIO_ITAG, "")):
-            di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
-
-        if not aonly:
-            vid_ok = di.Quality in dl_urls
-            if vid_ok and IsFragmented(dl_urls.get(di.Quality, "")):
-                di.SetDownloadUrl(DTYPE_VIDEO, dl_urls[di.Quality])
-
-    if not di.InProgress:
-        LogGeneral("Stream started at time %s", pr_start_timestamp(pr))
-        di.SetFormatInfoFromPlayerResponse(pr)
-        di.SetMetadataFromFormatInfo()
-        thumb_url = pr_thumbnail_url(pr)
-        if thumb_url:
-            di.Thumbnail = thumb_url
-        di.InProgress = True
-
-    di.Live = is_live
-    return True
+        di.Live = (live_status == "is_live")
+        return True
 
 
 def wait_for_start_delay(di: DownloadInfo) -> bool:

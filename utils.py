@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 import struct
 import sys
@@ -165,17 +164,6 @@ def InitializeHttpClient(proxy: Optional[str] = None):
     )
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-
-
-def DownloadData(url: str) -> bytes:
-    """Download data from the given URL."""
-    try:
-        resp = session.get(url, timeout=(15, 30))
-        resp.raise_for_status()
-        return resp.content
-    except Exception as e:
-        LogWarn("Failed to retrieve data from %s: %v", url, e)
-        return b""
 
 
 def DownloadThumbnail(url: str, fname: str, file_mode: int = 0o644) -> bool:
@@ -716,14 +704,4 @@ def IsFragmented(url: str) -> bool:
     return "noclen" in url.lower()
 
 
-_html_video_link_pattern = re.compile(
-    r'<link rel="canonical" href="https://www\.youtube\.com/watch\?v=([^"]+)"'
-)
 
-
-def GetVideoIdFromWatchPage(data: bytes) -> str:
-    """Extract video ID from a YouTube watch page HTML."""
-    match = _html_video_link_pattern.search(data.decode("utf-8", errors="replace"))
-    if match:
-        return match.group(1)
-    return ""

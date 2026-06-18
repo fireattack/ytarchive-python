@@ -7,10 +7,6 @@ import sys
 import tempfile
 import threading
 import time
-
-# Add the script directory to path for module imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from utils import (
     setup as platform_setup,
     SetLoglevel,
