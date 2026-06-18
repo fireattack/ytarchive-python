@@ -1,11 +1,11 @@
 import json
 import math
 import re
-from pathlib import Path
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from queue import Queue, Empty
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
@@ -13,10 +13,12 @@ from urllib.parse import urlparse, parse_qs
 from utils import (
     DTYPE_AUDIO, DTYPE_VIDEO, AUDIO_ITAG, AUDIO_ONLY_QUALITY,
     DEFAULT_POLL_TIME, DEFAULT_THREADS,
-    DEFAULT_FRAG_MAX_TRIES, LIVE_MAXIMUM_SEEKABLE, ACTION_ASK, LogDebug, LogError, LogGeneral, LogInfo, LogWarn, SecondsToDurationAndTimeStr, GetYesNo,
-    TryDelete, RemoveAtoms, IsFragmented,
-    VideoQualities, VideoLabelItags, Contains,
-    ParseQualitySelection, GetQualityFromUser,
+    DEFAULT_FRAG_MAX_TRIES, LIVE_MAXIMUM_SEEKABLE, ACTION_ASK,
+    log_debug, log_error, log_general, log_info, log_warn,
+    seconds_to_duration_and_time_str, get_yes_no,
+    try_delete, remove_atoms, is_fragmented,
+    video_qualities, video_label_itags, contains,
+    parse_quality_selection, get_quality_from_user,
     session,
 )
 
@@ -39,43 +41,43 @@ class MetaInfo(dict):
 @dataclass
 class Fragment:
     """A single downloaded fragment."""
-    Seq: int
-    FileName: str = ""
-    XHeadSeqNum: int = -1
-    Data: Optional[bytearray] = None
-    Slow: bool = False
-    MimeType: str = ""
+    seq: int
+    file_name: str = ""
+    x_head_seq_num: int = -1
+    data: Optional[bytearray] = None
+    slow: bool = False
+    mime_type: str = ""
 
 
 @dataclass
 class ProgressInfo:
     """Progress info sent from download thread to main thread."""
-    Itag: int
-    ByteCount: int
-    MaxSeq: int
-    StartFrag: int
+    itag: int
+    byte_count: int
+    max_seq: int
+    start_frag: int
 
 
 @dataclass
 class SeqChanInfo:
     """Information sent through the sequence channel."""
-    CurSequence: int
-    MaxSequence: int
+    cur_sequence: int
+    max_sequence: int
 
 
 @dataclass
 class FragThreadState:
     """State shared between fragment download functions."""
-    Name: str
-    BaseFilePath: str
-    DataType: str
-    SeqNum: int = 0
-    MaxSeq: int = -1
-    Tries: int = 0
-    FullRetries: int = 3
-    Is403: bool = False
-    ToFile: bool = True
-    SleepTime: float = 5.0
+    name: str
+    base_file_path: str
+    data_type: str
+    seq_num: int = 0
+    max_seq: int = -1
+    tries: int = 0
+    full_retries: int = 3
+    is_403: bool = False
+    to_file: bool = True
+    sleep_time: float = 5.0
 
 
 class MediaDLInfo:
@@ -90,62 +92,62 @@ class MediaDLInfo:
         self._url_host = ""
 
     @property
-    def ActiveJobs(self):
+    def active_jobs(self):
         with self._lock:
             return self._active_jobs
 
-    @ActiveJobs.setter
-    def ActiveJobs(self, val):
+    @active_jobs.setter
+    def active_jobs(self, val):
         with self._lock:
             self._active_jobs = val
 
     @property
-    def DownloadURL(self):
+    def download_url(self):
         with self._lock:
             return self._download_url
 
-    @DownloadURL.setter
-    def DownloadURL(self, val):
+    @download_url.setter
+    def download_url(self, val):
         with self._lock:
             self._download_url = val
 
     @property
-    def BasePath(self):
+    def base_path(self):
         with self._lock:
             return self._base_path
 
-    @BasePath.setter
-    def BasePath(self, val):
+    @base_path.setter
+    def base_path(self, val):
         with self._lock:
             self._base_path = val
 
     @property
-    def DataType(self):
+    def data_type(self):
         with self._lock:
             return self._data_type
 
-    @DataType.setter
-    def DataType(self, val):
+    @data_type.setter
+    def data_type(self, val):
         with self._lock:
             self._data_type = val
 
     @property
-    def Finished(self):
+    def finished(self):
         with self._lock:
             return self._finished
 
-    @Finished.setter
-    def Finished(self, val):
+    @finished.setter
+    def finished(self, val):
         with self._lock:
             self._finished = val
 
     @property
-    def URLHost(self):
+    def url_host(self):
         with self._lock:
             return self._url_host
 
-    @URLHost.setter
-    def URLHost(self, val):
+    @url_host.setter
+    def url_host(self, val):
         with self._lock:
             self._url_host = val
 
@@ -153,11 +155,11 @@ class MediaDLInfo:
 @dataclass
 class DownloadState:
     """State for resumable downloading."""
-    StartFrag: int = 0
-    Fragments: int = 0
-    Size: int = 0
-    TempDir: str = ""
-    File: str = ""
+    start_frag: int = 0
+    fragments: int = 0
+    size: int = 0
+    temp_dir: str = ""
+    file_path: str = ""
 
 
 class DownloadInfo:
@@ -167,65 +169,65 @@ class DownloadInfo:
         self._lock = threading.RLock()
 
         # Format info
-        self.FormatInfo = self.NewFormatInfo()
-        self.Metadata = self.NewMetaInfo()
-        self.CookiesURL = None
-        self.VisitorData = ""
-        self.PoToken = ""
+        self.format_info = self.new_format_info()
+        self.metadata = self.new_meta_info()
+        self.cookies_url = None
+        self.visitor_data = ""
+        self.po_token = ""
 
         # State flags
-        self.Stopping = False
-        self.InProgress = False
-        self.Live = False
-        self.VP9 = False
-        self.H264 = False
-        self.AV1 = False
-        self.Unavailable = False
-        self.GVideoDDL = False
-        self.FragFiles = True
-        self.LiveURL = False
-        self.AudioOnly = False
-        self.VideoOnly = False
-        self.MembersOnly = False
-        self.InfoPrinted = False
-        self.DisableSaveState = False
+        self.stopping = False
+        self.in_progress = False
+        self.live = False
+        self.vp9 = False
+        self.h264 = False
+        self.av1 = False
+        self.unavailable = False
+        self.g_video_ddl = False
+        self.frag_files = True
+        self.live_url = False
+        self.audio_only = False
+        self.video_only = False
+        self.members_only = False
+        self.info_printed = False
+        self.disable_save_state = False
 
         # Stream info
-        self.Thumbnail = ""
-        self.VideoID = ""
-        self.URL = ""
-        self.SelectedQuality = ""
-        self.Status = ""
-        self.LiveFromVal = ""
-        self.YtdlpPath = "yt-dlp"
-        self.YtdlpOpts = ""
+        self.thumbnail = ""
+        self.video_id = ""
+        self.url = ""
+        self.selected_quality = ""
+        self.status = ""
+        self.live_from_val = ""
+        self.ytdlp_path = "yt-dlp"
+        self.ytdlp_opts = ""
 
         # Numeric settings
-        self.FragMaxTries = DEFAULT_FRAG_MAX_TRIES
-        self.Wait = ACTION_ASK
-        self.Quality = -1
-        self.RetrySecs = 0
-        self.Jobs = DEFAULT_THREADS
-        self.TargetDuration = 5
-        self.LastSq = -1
-        self.LiveFromSq = 0
-        self.CaptureDurationSecs = 0
-        self.StartDelaySecs = 0
-        self.LastUpdated = 0.0
+        self.frag_max_tries = DEFAULT_FRAG_MAX_TRIES
+        self.wait = ACTION_ASK
+        self.quality = -1
+        self.retry_secs = 0
+        self.jobs = DEFAULT_THREADS
+        self.target_duration = 5
+        self.last_sq = -1
+        self.live_from_sq = 0
+        self.capture_duration_secs = 0
+        self.start_delay_secs = 0
+        self.last_updated = 0.0
 
         # Download state
-        self.MDLInfo = {
+        self.mdl_info = {
             DTYPE_VIDEO: MediaDLInfo(),
             DTYPE_AUDIO: MediaDLInfo(),
         }
-        self.DLState = {}
+        self.dl_state = {}
 
         # File modes
-        self.FileMode = 0o644
-        self.DirMode = 0o755
+        self.file_mode = 0o644
+        self.dir_mode = 0o755
 
     @staticmethod
-    def NewFormatInfo() -> FormatInfo:
+    def new_format_info() -> FormatInfo:
         return FormatInfo({
             "id": "",
             "title": "",
@@ -246,7 +248,7 @@ class DownloadInfo:
         })
 
     @staticmethod
-    def NewMetaInfo() -> MetaInfo:
+    def new_meta_info() -> MetaInfo:
         return MetaInfo({
             "title": "%(title)s",
             "artist": "%(channel)s",
@@ -256,108 +258,108 @@ class DownloadInfo:
 
     # Thread-safe property accessors
 
-    def IsStopping(self) -> bool:
+    def is_stopping(self) -> bool:
         with self._lock:
-            return self.Stopping
+            return self.stopping
 
-    def Stop(self):
+    def stop(self):
         with self._lock:
-            self.Stopping = True
-            self.SetFinished(DTYPE_AUDIO)
-            self.SetFinished(DTYPE_VIDEO)
+            self.stopping = True
+            self.set_finished(DTYPE_AUDIO)
+            self.set_finished(DTYPE_VIDEO)
 
-    def IsLive(self) -> bool:
+    def is_live(self) -> bool:
         with self._lock:
-            return self.Live
+            return self.live
 
-    def IsUnavailable(self) -> bool:
+    def is_unavailable(self) -> bool:
         with self._lock:
-            return self.Unavailable
+            return self.unavailable
 
-    def IsGVideoDDL(self) -> bool:
+    def is_g_video_ddl(self) -> bool:
         with self._lock:
-            return self.GVideoDDL
+            return self.g_video_ddl
 
-    def IsFinished(self, data_type: str) -> bool:
+    def is_finished(self, data_type: str) -> bool:
         with self._lock:
-            return self.MDLInfo[data_type].Finished
+            return self.mdl_info[data_type].finished
 
-    def SetFinished(self, data_type: str):
+    def set_finished(self, data_type: str):
         with self._lock:
-            self.MDLInfo[data_type].Finished = True
+            self.mdl_info[data_type].finished = True
 
-    def GetDownloadUrl(self, data_type: str) -> str:
+    def get_download_url(self, data_type: str) -> str:
         with self._lock:
-            return self.MDLInfo[data_type].DownloadURL
+            return self.mdl_info[data_type].download_url
 
-    def SetDownloadUrl(self, data_type: str, url: str):
+    def set_download_url(self, data_type: str, url: str):
         with self._lock:
-            self.MDLInfo[data_type].DownloadURL = url
+            self.mdl_info[data_type].download_url = url
             if url:
                 try:
                     parsed = urlparse(url)
                     # Format URL for sequence number insertion (handle already-formatted)
-                    self.MDLInfo[data_type].URLHost = parsed.hostname or ""
+                    self.mdl_info[data_type].url_host = parsed.hostname or ""
                 except Exception:
                     pass
 
-    def GetDownloadUrlHost(self, data_type: str) -> str:
+    def get_download_url_host(self, data_type: str) -> str:
         with self._lock:
-            return self.MDLInfo[data_type].URLHost
+            return self.mdl_info[data_type].url_host
 
-    def GetBaseFilePath(self, data_type: str) -> str:
+    def get_base_file_path(self, data_type: str) -> str:
         with self._lock:
-            return self.MDLInfo[data_type].BasePath
+            return self.mdl_info[data_type].base_path
 
-    def SetBaseFilePath(self, data_type: str, path: str):
+    def set_base_file_path(self, data_type: str, path: str):
         with self._lock:
-            self.MDLInfo[data_type].BasePath = path
+            self.mdl_info[data_type].base_path = path
 
-    def GetActiveJobCount(self, data_type: str) -> int:
+    def get_active_job_count(self, data_type: str) -> int:
         with self._lock:
-            return self.MDLInfo[data_type].ActiveJobs
+            return self.mdl_info[data_type].active_jobs
 
-    def IncrementJobs(self, data_type: str):
+    def increment_jobs(self, data_type: str):
         with self._lock:
-            self.MDLInfo[data_type].ActiveJobs += 1
+            self.mdl_info[data_type].active_jobs += 1
 
-    def DecrementJobs(self, data_type: str):
+    def decrement_jobs(self, data_type: str):
         with self._lock:
-            self.MDLInfo[data_type].ActiveJobs -= 1
+            self.mdl_info[data_type].active_jobs -= 1
 
-    def SetStatus(self, status: str):
+    def set_status(self, status: str):
         with self._lock:
-            self.Status = status
+            self.status = status
 
-    def GetStatus(self) -> str:
+    def get_status(self) -> str:
         with self._lock:
-            return self.Status
+            return self.status
 
-    def PrintStatus(self):
+    def print_status(self):
         """Print the current download status."""
-        status = self.GetStatus()
+        status = self.get_status()
         if status:
             import sys
             sys.stderr.write(status)
             sys.stderr.flush()
 
-    def GetTimeSinceUpdated(self) -> float:
+    def get_time_since_updated(self) -> float:
         with self._lock:
-            if self.LastUpdated == 0:
+            if self.last_updated == 0:
                 return float('inf')
-            return time.time() - self.LastUpdated
+            return time.time() - self.last_updated
 
     # Quality selection helpers
-    def GetCodecPriorityOrder(self) -> list:
+    def get_codec_priority_order(self) -> list:
         """Get ordered list of preferred codecs based on user flags."""
         base_order = ["av1", "vp9", "h264"]
         preferred = []
         for codec in base_order:
-            if codec == "h264" and self.H264:
+            if codec == "h264" and self.h264:
                 preferred.append(codec)
-            elif codec == "vp9" and self.VP9:
+            elif codec == "vp9" and self.vp9:
                 preferred.append(codec)
-            elif codec == "av1" and self.AV1:
+            elif codec == "av1" and self.av1:
                 preferred.append(codec)
 
         order = list(preferred)
@@ -367,58 +369,58 @@ class DownloadInfo:
         return order
 
     # State save/load
-    def SaveState(self, itag: int):
+    def save_state(self, itag: int):
         """Save download state to a JSON file for resume."""
-        if self.DisableSaveState:
+        if self.disable_save_state:
             return
-        if itag not in self.DLState:
+        if itag not in self.dl_state:
             return
-        state = self.DLState[itag]
-        if not state.File:
+        state = self.dl_state[itag]
+        if not state.file_path:
             return
 
         data = {
-            "StartFrag": state.StartFrag,
-            "Fragments": state.Fragments,
-            "Size": state.Size,
-            "TempDir": state.TempDir,
+            "start_frag": state.start_frag,
+            "fragments": state.fragments,
+            "size": state.size,
+            "temp_dir": state.temp_dir,
         }
         try:
-            with open(state.File, "w") as f:
+            with open(state.file_path, "w") as f:
                 json.dump(data, f)
         except Exception as e:
-            LogDebug("Failed to save state for itag %d: %s", itag, str(e))
+            log_debug("Failed to save state for itag %d: %s", itag, str(e))
 
-    def LoadState(self, itag: int) -> bool:
+    def load_state(self, itag: int) -> bool:
         """Load download state from a JSON file for resume.
         Returns True if state was loaded."""
-        if itag not in self.DLState:
+        if itag not in self.dl_state:
             return False
-        state = self.DLState[itag]
-        if not state.File or not Path(state.File).exists():
+        state = self.dl_state[itag]
+        if not state.file_path or not Path(state.file_path).exists():
             return False
         try:
-            with open(state.File, "r") as f:
+            with open(state.file_path, "r") as f:
                 data = json.load(f)
-            state.StartFrag = data.get("StartFrag", 0)
-            state.Fragments = data.get("Fragments", 0)
-            state.Size = data.get("Size", 0)
-            state.TempDir = data.get("TempDir", "")
+            state.start_frag = data.get("start_frag", 0)
+            state.fragments = data.get("fragments", 0)
+            state.size = data.get("size", 0)
+            state.temp_dir = data.get("temp_dir", "")
             return True
         except Exception as e:
-            LogDebug("Failed to load state for itag %d: %s", itag, str(e))
+            log_debug("Failed to load state for itag %d: %s", itag, str(e))
             return False
 
     # Metadata formatting
-    def SetFormatInfoFromYtdlp(self, data: dict):
-        """Populate FormatInfo from yt-dlp JSON."""
-        fi = self.FormatInfo
-        fi["id"] = data.get("id", self.VideoID)
+    def set_format_info_from_ytdlp(self, data: dict):
+        """Populate format_info from yt-dlp JSON."""
+        fi = self.format_info
+        fi["id"] = data.get("id", self.video_id)
         fi["title"] = data.get("title", "")
         fi["channel_id"] = data.get("channel_id", "")
         fi["channel"] = data.get("uploader", "") or data.get("channel", "")
         fi["description"] = data.get("description", "")
-        fi["url"] = self.URL
+        fi["url"] = self.url
 
         upload_date = data.get("upload_date", "")
         fi["upload_date"] = upload_date
@@ -443,29 +445,29 @@ class DownloadInfo:
             except Exception:
                 pass
 
-    def SetMetadataFromFormatInfo(self):
-        """Format metadata values using FormatInfo."""
-        for k, v in self.Metadata.items():
+    def set_metadata_from_format_info(self):
+        """Format metadata values using format_info."""
+        for k, v in self.metadata.items():
             try:
-                self.Metadata[k] = v % self.FormatInfo
+                self.metadata[k] = v % self.format_info
             except (KeyError, ValueError):
                 pass
 
-    def PrintChannelAndTitle(self, data: dict):
+    def print_channel_and_title(self, data: dict):
         """Print channel and title info from yt-dlp data."""
-        if self.InfoPrinted:
+        if self.info_printed:
             return
         channel = data.get("uploader", "") or data.get("channel", "Unknown")
         title = data.get("title", "Unknown")
-        self.InfoPrinted = True
-        LogGeneral("Channel: %s", channel)
-        LogGeneral("Title: %s", title)
+        self.info_printed = True
+        log_general("Channel: %s", channel)
+        log_general("Title: %s", title)
 
-    def AskWaitForStream(self) -> bool:
+    def ask_wait_for_stream(self) -> bool:
         """Ask user if they want to wait for a scheduled stream."""
-        LogGeneral("Stream is currently offline.")
-        LogGeneral("You can wait until it starts or exit.")
-        return GetYesNo("Wait for the stream to start?")
+        log_general("Stream is currently offline.")
+        log_general("You can wait until it starts or exit.")
+        return get_yes_no("Wait for the stream to start?")
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +476,7 @@ class DownloadInfo:
 
 def execute_ytdlp(di: DownloadInfo) -> Optional[bytes]:
     """Execute yt-dlp to get stream info JSON."""
-    args = [di.YtdlpPath, "-j", "--extractor-args", "youtube:formats=incomplete"]
+    args = [di.ytdlp_path, "-j", "--extractor-args", "youtube:formats=incomplete"]
 
     # Add cookies
     import utils as _u
@@ -486,18 +488,18 @@ def execute_ytdlp(di: DownloadInfo) -> Optional[bytes]:
         args.extend(["--proxy", _u.proxy_url])
 
     # Add custom yt-dlp options
-    if di.YtdlpOpts:
+    if di.ytdlp_opts:
         import shlex
         try:
-            custom_args = shlex.split(di.YtdlpOpts)
+            custom_args = shlex.split(di.ytdlp_opts)
         except ValueError:
-            custom_args = di.YtdlpOpts.split()
+            custom_args = di.ytdlp_opts.split()
         args.extend(custom_args)
 
     # Add URL
-    args.append(di.URL)
+    args.append(di.url)
 
-    LogDebug("Executing yt-dlp (attempt): %s", " ".join(args))
+    log_debug("Executing yt-dlp (attempt): %s", " ".join(args))
 
     try:
         result = subprocess.run(
@@ -506,34 +508,34 @@ def execute_ytdlp(di: DownloadInfo) -> Optional[bytes]:
             timeout=30,
         )
         if result.returncode == 0:
-            LogDebug("Successfully retrieved stream info from yt-dlp")
+            log_debug("Successfully retrieved stream info from yt-dlp")
             return result.stdout
         else:
-            LogWarn("yt-dlp returned non-zero exit code: %d", result.returncode)
+            log_warn("yt-dlp returned non-zero exit code: %d", result.returncode)
             if result.stderr:
-                LogDebug("yt-dlp stderr: %s", result.stderr.decode("utf-8", errors="replace")[:500])
+                log_debug("yt-dlp stderr: %s", result.stderr.decode("utf-8", errors="replace")[:500])
             return None
     except subprocess.TimeoutExpired:
-        LogWarn("yt-dlp timed out after 30 seconds")
+        log_warn("yt-dlp timed out after 30 seconds")
         return None
     except FileNotFoundError:
-        LogWarn("yt-dlp not found at '%s'", di.YtdlpPath)
+        log_warn("yt-dlp not found at '%s'", di.ytdlp_path)
         return None
     except Exception as e:
-        LogWarn("yt-dlp execution error: %s", str(e))
+        log_warn("yt-dlp execution error: %s", str(e))
         return None
 
 
 def execute_ytdlp_with_retry(di: DownloadInfo, max_retries: int = 3) -> Optional[bytes]:
     """Execute yt-dlp with retry logic."""
     for i in range(max_retries):
-        LogDebug("Executing yt-dlp (attempt %d/%d)", i + 1, max_retries)
+        log_debug("Executing yt-dlp (attempt %d/%d)", i + 1, max_retries)
         output = execute_ytdlp(di)
         if output is not None:
             return output
         if i < max_retries - 1:
             time.sleep(2)
-    LogWarn("Failed to get stream info from yt-dlp after %d attempts", max_retries)
+    log_warn("Failed to get stream info from yt-dlp after %d attempts", max_retries)
     return None
 
 
@@ -593,7 +595,7 @@ def parse_ytdlp_json(json_data: bytes) -> tuple:
     try:
         payload = json.loads(json_data)
     except json.JSONDecodeError as e:
-        LogDebug("Failed to parse yt-dlp json: %v", str(e))
+        log_debug("Failed to parse yt-dlp json: %v", str(e))
         return adaptive_urls, dash_urls, last_sq
 
     formats = payload.get("formats", [])
@@ -616,9 +618,9 @@ def parse_ytdlp_json(json_data: bytes) -> tuple:
         adaptive_urls[itag] = url.replace("%", "%%") + "&sq=%d"
 
     if adaptive_urls:
-        LogDebug("Loaded %d adaptive format URLs from yt-dlp", len(adaptive_urls))
+        log_debug("Loaded %d adaptive format URLs from yt-dlp", len(adaptive_urls))
     if dash_urls:
-        LogDebug("Loaded %d dash format URLs from yt-dlp", len(dash_urls))
+        log_debug("Loaded %d dash format URLs from yt-dlp", len(dash_urls))
 
     return adaptive_urls, dash_urls, last_sq
 
@@ -631,9 +633,9 @@ def parse_input_url(di: DownloadInfo) -> bool:
     """Parse the input URL to extract video ID and determine URL type.
     Returns True on success."""
     try:
-        parsed = urlparse(di.URL)
+        parsed = urlparse(di.url)
     except Exception as e:
-        LogError("Error parsing URL: %s", str(e))
+        log_error("Error parsing URL: %s", str(e))
         return False
 
     lower_host = parsed.hostname or ""
@@ -645,9 +647,9 @@ def parse_input_url(di: DownloadInfo) -> bool:
     if lower_host == "youtube.com":
         if lower_path.startswith("/watch"):
             if "v" not in query:
-                LogError("YouTube URL missing video ID")
+                log_error("YouTube URL missing video ID")
                 return False
-            di.VideoID = query["v"][0]
+            di.video_id = query["v"][0]
             return True
 
         elif (lower_path.startswith("/channel/") or lower_path.startswith("/c/") or
@@ -657,64 +659,64 @@ def parse_input_url(di: DownloadInfo) -> bool:
             chan_slash_idx = lower_path[1:].find("/") + 1
             no_chan_path = lower_path[chan_slash_idx:]
             if no_chan_path.rfind("/") > 0:
-                last_slash = di.URL.rfind("/")
-                di.URL = di.URL[:last_slash]
-            di.URL = f"{di.URL}/live"
-            di.LiveURL = True
+                last_slash = di.url.rfind("/")
+                di.url = di.url[:last_slash]
+            di.url = f"{di.url}/live"
+            di.live_url = True
             return True
 
         elif lower_path.startswith("/live/"):
-            di.VideoID = parsed.path.removeprefix("/live/")
+            di.video_id = parsed.path.removeprefix("/live/")
             return True
 
         elif lower_path.startswith("/shorts/"):
-            di.VideoID = parsed.path.removeprefix("/shorts/")
+            di.video_id = parsed.path.removeprefix("/shorts/")
             return True
 
     elif lower_host == "youtu.be":
-        di.VideoID = parsed.path.strip("/")
+        di.video_id = parsed.path.strip("/")
         return True
 
     elif lower_host.endswith(".googlevideo.com"):
         if "noclen" not in query:
-            LogError("Given Google Video URL is not for a fragmented stream")
+            log_error("Given Google Video URL is not for a fragmented stream")
             return False
 
-        di.GVideoDDL = True
+        di.g_video_ddl = True
         id_val = query.get("id", [""])[0]
         dot_idx = id_val.rfind(".")
         if dot_idx > 0:
             id_val = id_val[:dot_idx]
-        di.VideoID = id_val
-        di.FormatInfo["id"] = di.VideoID
+        di.video_id = id_val
+        di.format_info["id"] = di.video_id
 
-        sq_idx = di.URL.find("&sq=")
+        sq_idx = di.url.find("&sq=")
         try:
             itag = int(query.get("itag", ["-1"])[0])
         except ValueError:
-            LogError("Error parsing itag parameter of Google Video URL")
+            log_error("Error parsing itag parameter of Google Video URL")
             return False
 
         if sq_idx < 0:
-            LogError("Could not find 'sq' parameter in given Google Video URL")
+            log_error("Could not find 'sq' parameter in given Google Video URL")
             return False
 
         if itag == AUDIO_ITAG:
-            if not di.GetDownloadUrl(DTYPE_AUDIO):
-                di.SetDownloadUrl(DTYPE_AUDIO, di.URL[:sq_idx] + "&sq=%d")
-            if not di.GetDownloadUrl(DTYPE_VIDEO) and not di.AudioOnly:
-                # Will be handled later via GetVideoInfo
+            if not di.get_download_url(DTYPE_AUDIO):
+                di.set_download_url(DTYPE_AUDIO, di.url[:sq_idx] + "&sq=%d")
+            if not di.get_download_url(DTYPE_VIDEO) and not di.audio_only:
+                # Will be handled later via get_video_info
                 pass
         else:
-            if not di.GetDownloadUrl(DTYPE_VIDEO):
-                di.SetDownloadUrl(DTYPE_VIDEO, di.URL[:sq_idx] + "&sq=%d")
-            if not di.GetDownloadUrl(DTYPE_AUDIO) and not di.VideoOnly:
+            if not di.get_download_url(DTYPE_VIDEO):
+                di.set_download_url(DTYPE_VIDEO, di.url[:sq_idx] + "&sq=%d")
+            if not di.get_download_url(DTYPE_AUDIO) and not di.video_only:
                 pass
 
-        di.Quality = itag
+        di.quality = itag
         return True
 
-    LogError("%s is not a known valid YouTube URL", di.URL)
+    log_error("%s is not a known valid YouTube URL", di.url)
     return False
 
 
@@ -763,14 +765,14 @@ def _parse_duration_str(s: str) -> Optional[int]:
 
 
 def parse_live_from_str(di: DownloadInfo):
-    """Parse --live-from value and set LiveFromSq."""
-    if not di.LiveFromVal:
+    """Parse --live-from value and set live_from_sq."""
+    if not di.live_from_val:
         return
 
-    val = di.LiveFromVal
+    val = di.live_from_val
     if val.lower() == "now":
-        di.LiveFromSq = di.LastSq
-        LogGeneral("Starting download from current time")
+        di.live_from_sq = di.last_sq
+        log_general("Starting download from current time")
         return
 
     is_negative = val.startswith("-")
@@ -778,47 +780,47 @@ def parse_live_from_str(di: DownloadInfo):
 
     seconds_total = _parse_duration_str(duration_val)
     if seconds_total is None:
-        LogError("Unable to parse value as either a duration or a time string: %s", val)
+        log_error("Unable to parse value as either a duration or a time string: %s", val)
         return
 
-    frag_dur = float(di.TargetDuration)
+    frag_dur = float(di.target_duration)
     seconds_rounded = int(math.ceil(seconds_total / frag_dur) * frag_dur)
-    no_of_frags = seconds_rounded // di.TargetDuration
+    no_of_frags = seconds_rounded // di.target_duration
 
     if is_negative:
         if seconds_total < 0 or seconds_total > LIVE_MAXIMUM_SEEKABLE:
-            LogError("Invalid duration specified '%s'. (Maximum video seek time is %d days)",
+            log_error("Invalid duration specified '%s'. (Maximum video seek time is %d days)",
                      val, LIVE_MAXIMUM_SEEKABLE // 86400)
             return
-        if no_of_frags > di.LastSq:
-            stream_length = di.LastSq * di.TargetDuration
-            LogError("Invalid duration specified. The stream has not been live for that long [Live for %s].",
-                     SecondsToDurationAndTimeStr(stream_length))
+        if no_of_frags > di.last_sq:
+            stream_length = di.last_sq * di.target_duration
+            log_error("Invalid duration specified. The stream has not been live for that long [Live for %s].",
+                     seconds_to_duration_and_time_str(stream_length))
             return
-        di.LiveFromSq = di.LastSq - no_of_frags
-        LogGeneral("Jumping back %d seconds from now, and starting to download from that time.", seconds_rounded)
-        LogDebug("Jumping back %d frags. Will start from sequence %d [current is %d].", no_of_frags, di.LiveFromSq, di.LastSq)
+        di.live_from_sq = di.last_sq - no_of_frags
+        log_general("Jumping back %d seconds from now, and starting to download from that time.", seconds_rounded)
+        log_debug("Jumping back %d frags. Will start from sequence %d [current is %d].", no_of_frags, di.live_from_sq, di.last_sq)
     else:
-        max_sq = di.LastSq
+        max_sq = di.last_sq
         target_start_frag = no_of_frags
-        if di.LastSq < target_start_frag:
-            stream_length = di.LastSq * di.TargetDuration
-            LogError("Invalid duration specified. The stream has not been live for that long [Live for %s].",
-                     SecondsToDurationAndTimeStr(stream_length))
+        if di.last_sq < target_start_frag:
+            stream_length = di.last_sq * di.target_duration
+            log_error("Invalid duration specified. The stream has not been live for that long [Live for %s].",
+                     seconds_to_duration_and_time_str(stream_length))
             return
-        if target_start_frag < (di.LastSq - LIVE_MAXIMUM_SEEKABLE // di.TargetDuration):
-            LogError("YT only retains the livestream 7 days past for seeking, your --live-from value of '%s' is not valid.", val)
-            stream_live_time = di.LastSq * di.TargetDuration
+        if target_start_frag < (di.last_sq - LIVE_MAXIMUM_SEEKABLE // di.target_duration):
+            log_error("YT only retains the livestream 7 days past for seeking, your --live-from value of '%s' is not valid.", val)
+            stream_live_time = di.last_sq * di.target_duration
             min_seek_time = stream_live_time - LIVE_MAXIMUM_SEEKABLE
-            LogError("You must specify a --live-from value between: %s and %s",
-                     SecondsToDurationAndTimeStr(min_seek_time),
-                     SecondsToDurationAndTimeStr(stream_live_time))
+            log_error("You must specify a --live-from value between: %s and %s",
+                     seconds_to_duration_and_time_str(min_seek_time),
+                     seconds_to_duration_and_time_str(stream_live_time))
             return
-        di.LiveFromSq = target_start_frag
-        start_time_str = SecondsToDurationAndTimeStr(di.LiveFromSq * di.TargetDuration)
-        total_time_str = SecondsToDurationAndTimeStr((max_sq - di.LiveFromSq) * di.TargetDuration)
-        LogGeneral("Starting from stream time '%s' and grabbing '%s' of content (and counting).", start_time_str, total_time_str)
-        LogDebug("Starting from sequence %d [max right now is %d]", di.LiveFromSq, max_sq)
+        di.live_from_sq = target_start_frag
+        start_time_str = seconds_to_duration_and_time_str(di.live_from_sq * di.target_duration)
+        total_time_str = seconds_to_duration_and_time_str((max_sq - di.live_from_sq) * di.target_duration)
+        log_general("Starting from stream time '%s' and grabbing '%s' of content (and counting).", start_time_str, total_time_str)
+        log_debug("Starting from sequence %d [max right now is %d]", di.live_from_sq, max_sq)
 
 
 def parse_capture_duration(di: DownloadInfo, val: str):
@@ -827,10 +829,10 @@ def parse_capture_duration(di: DownloadInfo, val: str):
         return
     seconds = _parse_duration_str(val)
     if seconds is None:
-        LogError("Unable to parse value as either a Duration or a Time String: %s", val)
+        log_error("Unable to parse value as either a Duration or a Time String: %s", val)
         return
-    di.CaptureDurationSecs = seconds
-    LogGeneral("Downloading a minimum of %s of content and then exiting...", SecondsToDurationAndTimeStr(seconds))
+    di.capture_duration_secs = seconds
+    log_general("Downloading a minimum of %s of content and then exiting...", seconds_to_duration_and_time_str(seconds))
 
 
 def parse_start_delay(di: DownloadInfo, val: str):
@@ -839,9 +841,9 @@ def parse_start_delay(di: DownloadInfo, val: str):
         return
     seconds = _parse_duration_str(val)
     if seconds is None:
-        LogError("Unable to parse value as either a Duration or a Time String: %s", val)
+        log_error("Unable to parse value as either a Duration or a Time String: %s", val)
         return
-    di.StartDelaySecs = seconds
+    di.start_delay_secs = seconds
 
 
 # ---------------------------------------------------------------------------
@@ -857,7 +859,7 @@ def _parse_ytdlp_info(json_data: bytes) -> dict:
     try:
         data = json.loads(json_data)
     except json.JSONDecodeError as e:
-        LogDebug("Failed to parse yt-dlp JSON: %s", str(e))
+        log_debug("Failed to parse yt-dlp JSON: %s", str(e))
         return {}
 
     # Extract format URLs (same logic as parse_ytdlp_json)
@@ -882,9 +884,9 @@ def get_video_info(di: DownloadInfo) -> bool:
     """Get video info and download URLs from yt-dlp.
     Returns True on success."""
     with di._lock:
-        if di.GVideoDDL or di.Stopping or di.Unavailable:
+        if di.g_video_ddl or di.stopping or di.unavailable:
             return False
-        delta = time.time() - di.LastUpdated
+        delta = time.time() - di.last_updated
         if delta < DEFAULT_POLL_TIME:
             return False
 
@@ -893,71 +895,71 @@ def get_video_info(di: DownloadInfo) -> bool:
     live_waited = 0
 
     sel_qualities = []
-    if di.SelectedQuality:
-        sel_qualities = ParseQualitySelection(VideoQualities, di.SelectedQuality)
+    if di.selected_quality:
+        sel_qualities = parse_quality_selection(video_qualities, di.selected_quality)
 
     while True:
         json_data = execute_ytdlp_with_retry(di, 3)
         if not json_data:
-            LogError("Failed to get stream info from yt-dlp")
-            di.Live = False
-            di.Unavailable = True
+            log_error("Failed to get stream info from yt-dlp")
+            di.live = False
+            di.unavailable = True
             return False
 
         data = _parse_ytdlp_info(json_data)
         if not data:
-            LogError("Failed to parse yt-dlp output")
+            log_error("Failed to parse yt-dlp output")
             return False
 
         live_status = data.get("live_status", "")
 
         # Handle scheduled / upcoming streams
         if live_status == "is_upcoming":
-            if di.InProgress:
-                LogDebug("Stream status changed to upcoming mid-download")
+            if di.in_progress:
+                log_debug("Stream status changed to upcoming mid-download")
                 return False
 
-            if di.LiveFromVal and di.LiveFromVal.startswith("-"):
-                LogError("Option --live-from with a negative duration is not valid for a scheduled stream.")
+            if di.live_from_val and di.live_from_val.startswith("-"):
+                log_error("Option --live-from with a negative duration is not valid for a scheduled stream.")
                 return False
 
-            if di.Wait == ACTION_DO_NOT:
-                LogError("Stream has not started, and you have opted not to wait.")
+            if di.wait == ACTION_DO_NOT:
+                log_error("Stream has not started, and you have opted not to wait.")
                 return False
 
-            if first_wait and di.Wait == ACTION_ASK and di.RetrySecs == 0:
-                if not di.AskWaitForStream():
+            if first_wait and di.wait == ACTION_ASK and di.retry_secs == 0:
+                if not di.ask_wait_for_stream():
                     return False
 
             if first_wait:
-                di.PrintChannelAndTitle(data)
+                di.print_channel_and_title(data)
                 if not sel_qualities:
-                    sel_qualities = GetQualityFromUser(VideoQualities, True)
+                    sel_qualities = get_quality_from_user(video_qualities, True)
 
             release_ts = data.get("release_timestamp")
-            if release_ts and di.RetrySecs <= 0:
+            if release_ts and di.retry_secs <= 0:
                 cur_time = int(time.time())
                 sleep_time = release_ts - cur_time
                 if sleep_time > 0:
                     if first_wait:
                         first_wait = False
-                    LogGeneral("Stream starts at %s in %d seconds.",
+                    log_general("Stream starts at %s in %d seconds.",
                         time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(release_ts)), sleep_time)
-                    LogGeneral("Waiting for this time to elapse...")
+                    log_general("Waiting for this time to elapse...")
                     while sleep_time > 0:
                         time.sleep(min(sleep_time, 60))
                         cur_time = int(time.time())
                         sleep_time = release_ts - cur_time
                     continue
 
-            di.RetrySecs = di.RetrySecs or DEFAULT_POLL_TIME
+            di.retry_secs = di.retry_secs or DEFAULT_POLL_TIME
 
             if first_wait:
                 first_wait = False
-                LogGeneral("Waiting for stream, retrying every %d seconds...\n", di.RetrySecs)
+                log_general("Waiting for stream, retrying every %d seconds...\n", di.retry_secs)
 
-            time.sleep(di.RetrySecs)
-            live_waited += di.RetrySecs
+            time.sleep(di.retry_secs)
+            live_waited += di.retry_secs
             retry_count += 1
             import utils as _u
             msg = "Retries: %d (Last retry: %s), Total time waited: %d seconds"
@@ -971,28 +973,28 @@ def get_video_info(di: DownloadInfo) -> bool:
 
         # Not a livestream at all
         if live_status not in ("is_live", "was_live", "post_live"):
-            if di.Live:
-                di.Live = False
+            if di.live:
+                di.live = False
             else:
-                LogError("%s is not a livestream. It would be better to use yt-dlp to download it.", di.URL)
+                log_error("%s is not a livestream. It would be better to use yt-dlp to download it.", di.url)
             return False
 
         # Stream has ended and is being processed
-        if live_status in ("was_live", "post_live") and not di.InProgress:
+        if live_status in ("was_live", "post_live") and not di.in_progress:
             if not data.get("formats"):
-                LogGeneral("Livestream has ended and is being processed. Download URLs not available.")
+                log_general("Livestream has ended and is being processed. Download URLs not available.")
                 return False
             adaptive = data.get("_adaptive_urls", {})
             dash = data.get("_dash_urls", {})
             if not adaptive and not dash:
-                LogGeneral("Livestream has been processed. Use yt-dlp instead.")
+                log_general("Livestream has been processed. Use yt-dlp instead.")
                 return False
 
         # Stream is live (or was live with formats) — proceed
-        di.PrintChannelAndTitle(data)
+        di.print_channel_and_title(data)
 
         with di._lock:
-            di.LastUpdated = time.time()
+            di.last_updated = time.time()
 
         # Extract format URLs
         dl_urls = {}
@@ -1001,52 +1003,52 @@ def get_video_info(di: DownloadInfo) -> bool:
         last_sq = data.get("_last_sq", -1)
 
         if adaptive:
-            LogDebug("Using yt-dlp adaptive formats as primary source")
+            log_debug("Using yt-dlp adaptive formats as primary source")
             dl_urls.update(adaptive)
             if last_sq > 0:
-                di.LastSq = last_sq
+                di.last_sq = last_sq
         elif dash:
-            LogDebug("Using yt-dlp dash formats as fallback")
+            log_debug("Using yt-dlp dash formats as fallback")
             dl_urls.update(dash)
             if last_sq > 0:
-                di.LastSq = last_sq
+                di.last_sq = last_sq
 
         if not dl_urls:
-            LogError("No download URLs found")
+            log_error("No download URLs found")
             return False
 
         # Target duration
         target_dur = data.get("_target_duration")
         if target_dur:
-            di.TargetDuration = target_dur
-            LogDebug("Target fragment duration: %ds", target_dur)
+            di.target_duration = target_dur
+            log_debug("Target fragment duration: %ds", target_dur)
 
         # Quality selection (unchanged logic)
-        if di.Quality < 0:
+        if di.quality < 0:
             qualities = ["audio_only"]
             found = False
 
-            for qlabel in VideoQualities:
-                video_itag = VideoLabelItags[qlabel]
-                vp9_ok = video_itag.VP9 in dl_urls
-                h264_ok = video_itag.H264 in dl_urls
-                av1_ok = video_itag.AV1 in dl_urls
+            for qlabel in video_qualities:
+                video_itag = video_label_itags[qlabel]
+                vp9_ok = video_itag.vp9 in dl_urls
+                h264_ok = video_itag.h264 in dl_urls
+                av1_ok = video_itag.av1 in dl_urls
 
                 if qlabel.endswith("60"):
                     base_quality = qlabel[:-2]
-                    if base_quality in VideoLabelItags:
-                        base_itag = VideoLabelItags[base_quality]
-                        if base_itag.AV1 == video_itag.AV1:
-                            if base_itag.H264 in dl_urls or base_itag.VP9 in dl_urls:
+                    if base_quality in video_label_itags:
+                        base_itag = video_label_itags[base_quality]
+                        if base_itag.av1 == video_itag.av1:
+                            if base_itag.h264 in dl_urls or base_itag.vp9 in dl_urls:
                                 av1_ok = False
 
-                if Contains(qualities, qlabel) or (not vp9_ok and not h264_ok and not av1_ok):
+                if contains(qualities, qlabel) or (not vp9_ok and not h264_ok and not av1_ok):
                     continue
                 qualities.append(qlabel)
 
             while not found:
                 if not sel_qualities:
-                    sel_qualities = GetQualityFromUser(qualities, False)
+                    sel_qualities = get_quality_from_user(qualities, False)
 
                 for q in sel_qualities:
                     q = q.strip()
@@ -1055,27 +1057,27 @@ def get_video_info(di: DownloadInfo) -> bool:
                     elif q == "audio":
                         q = "audio_only"
 
-                    video_itag = VideoLabelItags[q]
-                    aonly = video_itag.VP9 == AUDIO_ONLY_QUALITY
+                    video_itag = video_label_itags[q]
+                    aonly = video_itag.vp9 == AUDIO_ONLY_QUALITY
 
-                    if not di.VideoOnly and AUDIO_ITAG in dl_urls:
-                        di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
+                    if not di.video_only and AUDIO_ITAG in dl_urls:
+                        di.set_download_url(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
 
                     if aonly:
-                        di.Quality = AUDIO_ONLY_QUALITY
-                        di.SetDownloadUrl(DTYPE_VIDEO, "")
+                        di.quality = AUDIO_ONLY_QUALITY
+                        di.set_download_url(DTYPE_VIDEO, "")
                         found = True
                         break
 
-                    codec_order = di.GetCodecPriorityOrder()
-                    LogDebug("Codec priority order: %s", ", ".join(codec_order).upper())
+                    codec_order = di.get_codec_priority_order()
+                    log_debug("Codec priority order: %s", ", ".join(codec_order).upper())
                     for codec in codec_order:
                         if codec == "h264":
-                            itag = video_itag.H264
+                            itag = video_itag.h264
                         elif codec == "vp9":
-                            itag = video_itag.VP9
+                            itag = video_itag.vp9
                         elif codec == "av1":
-                            itag = video_itag.AV1
+                            itag = video_itag.av1
                         else:
                             continue
 
@@ -1083,67 +1085,67 @@ def get_video_info(di: DownloadInfo) -> bool:
                             continue
 
                         if codec == "av1" and q.endswith("60"):
-                            if video_itag.AV1 in dl_urls:
+                            if video_itag.av1 in dl_urls:
                                 base_quality = q[:-2]
-                                if base_quality in VideoLabelItags:
-                                    base_itag = VideoLabelItags[base_quality]
-                                    if base_itag.AV1 == video_itag.AV1:
-                                        if base_itag.H264 in dl_urls or base_itag.VP9 in dl_urls:
-                                            LogDebug("Treating %s AV1 itag=%d as unavailable", q, video_itag.AV1)
+                                if base_quality in video_label_itags:
+                                    base_itag = video_label_itags[base_quality]
+                                    if base_itag.av1 == video_itag.av1:
+                                        if base_itag.h264 in dl_urls or base_itag.vp9 in dl_urls:
+                                            log_debug("Treating %s AV1 itag=%d as unavailable", q, video_itag.av1)
                                             continue
 
                         url = dl_urls.get(itag)
-                        LogDebug("Codec availability: %s itag=%d ok=%s", codec.upper(), itag, url is not None)
+                        log_debug("Codec availability: %s itag=%d ok=%s", codec.upper(), itag, url is not None)
                         if url is None:
                             continue
 
-                        di.SetDownloadUrl(DTYPE_VIDEO, url)
-                        di.Quality = itag
+                        di.set_download_url(DTYPE_VIDEO, url)
+                        di.quality = itag
                         found = True
-                        LogGeneral("Selected quality: %s (%s)", q, codec.upper())
+                        log_general("Selected quality: %s (%s)", q, codec.upper())
                         break
                     if found:
                         break
 
                 if not found:
-                    LogGeneral("The qualities you selected ended up unavailable for this stream")
-                    LogGeneral("You will now have the option to select from the available qualities")
+                    log_general("The qualities you selected ended up unavailable for this stream")
+                    log_general("You will now have the option to select from the available qualities")
                     sel_qualities = []
         else:
-            aonly = di.Quality == AUDIO_ONLY_QUALITY
-            if not di.VideoOnly and AUDIO_ITAG in dl_urls and IsFragmented(dl_urls.get(AUDIO_ITAG, "")):
-                di.SetDownloadUrl(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
+            aonly = di.quality == AUDIO_ONLY_QUALITY
+            if not di.video_only and AUDIO_ITAG in dl_urls and is_fragmented(dl_urls.get(AUDIO_ITAG, "")):
+                di.set_download_url(DTYPE_AUDIO, dl_urls[AUDIO_ITAG])
             if not aonly:
-                vid_ok = di.Quality in dl_urls
-                if vid_ok and IsFragmented(dl_urls.get(di.Quality, "")):
-                    di.SetDownloadUrl(DTYPE_VIDEO, dl_urls[di.Quality])
+                vid_ok = di.quality in dl_urls
+                if vid_ok and is_fragmented(dl_urls.get(di.quality, "")):
+                    di.set_download_url(DTYPE_VIDEO, dl_urls[di.quality])
 
-        if not di.InProgress:
+        if not di.in_progress:
             timestamp = data.get("timestamp") or data.get("release_timestamp")
             if timestamp:
-                LogGeneral("Stream started at time %s",
+                log_general("Stream started at time %s",
                     time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(timestamp)))
-            di.SetFormatInfoFromYtdlp(data)
-            di.SetMetadataFromFormatInfo()
+            di.set_format_info_from_ytdlp(data)
+            di.set_metadata_from_format_info()
             thumb_url = data.get("thumbnail", "")
             if thumb_url:
-                di.Thumbnail = thumb_url
-            di.InProgress = True
+                di.thumbnail = thumb_url
+            di.in_progress = True
 
-        di.Live = (live_status == "is_live")
+        di.live = (live_status == "is_live")
         return True
 
 
 def wait_for_start_delay(di: DownloadInfo) -> bool:
     """Wait for --start-delay duration before starting download."""
-    if di.Live and di.StartDelaySecs > 0:
-        frag_dur = float(di.TargetDuration)
-        seconds_rounded = int(math.ceil(di.StartDelaySecs / frag_dur) * frag_dur)
-        no_of_frags = seconds_rounded // di.TargetDuration
-        di.LiveFromSq = di.LastSq + no_of_frags
+    if di.live and di.start_delay_secs > 0:
+        frag_dur = float(di.target_duration)
+        seconds_rounded = int(math.ceil(di.start_delay_secs / frag_dur) * frag_dur)
+        no_of_frags = seconds_rounded // di.target_duration
+        di.live_from_sq = di.last_sq + no_of_frags
 
-        LogGeneral("Waiting %s before starting to download...", SecondsToDurationAndTimeStr(seconds_rounded))
-        LogDebug("Will start from sequence %d [current is %d]", di.LiveFromSq, di.LastSq)
+        log_general("Waiting %s before starting to download...", seconds_to_duration_and_time_str(seconds_rounded))
+        log_debug("Will start from sequence %d [current is %d]", di.live_from_sq, di.last_sq)
 
         time.sleep(seconds_rounded)
 
@@ -1159,98 +1161,98 @@ def wait_for_start_delay(di: DownloadInfo) -> bool:
 
 def handle_frag_http_error(di: DownloadInfo, state: FragThreadState, status_code: int, url: str):
     """Handle HTTP error during fragment download."""
-    LogDebug("%s: HTTP Error for fragment %d: %d", state.Name, state.SeqNum, status_code)
-    di.PrintStatus()
+    log_debug("%s: HTTP Error for fragment %d: %d", state.name, state.seq_num, status_code)
+    di.print_status()
 
     if status_code == 403:
-        state.Is403 = True
-        refresh_url(di, state.DataType, url)
-    elif status_code == 404 and state.MaxSeq > -1 and not di.IsLive() and state.SeqNum > (state.MaxSeq - 2):
-        LogDebug("%s: Stream has ended and fragment within the last two not found, probably not actually created", state.Name)
-        di.PrintStatus()
-        di.SetFinished(state.DataType)
+        state.is_403 = True
+        refresh_url(di, state.data_type, url)
+    elif status_code == 404 and state.max_seq > -1 and not di.is_live() and state.seq_num > (state.max_seq - 2):
+        log_debug("%s: Stream has ended and fragment within the last two not found, probably not actually created", state.name)
+        di.print_status()
+        di.set_finished(state.data_type)
 
 
 def handle_frag_download_error(di: DownloadInfo, state: FragThreadState, err: Exception):
     """Handle network error during fragment download."""
-    LogDebug("%s: Error with fragment %d: %s", state.Name, state.SeqNum, str(err))
-    di.PrintStatus()
+    log_debug("%s: Error with fragment %d: %s", state.name, state.seq_num, str(err))
+    di.print_status()
 
-    if state.MaxSeq > -1 and not di.IsLive() and state.SeqNum >= (state.MaxSeq - 2):
-        LogDebug("%s: Stream has ended and fragment number is within two of the known max, probably not actually created", state.Name)
-        di.SetFinished(state.DataType)
-        di.PrintStatus()
+    if state.max_seq > -1 and not di.is_live() and state.seq_num >= (state.max_seq - 2):
+        log_debug("%s: Stream has ended and fragment number is within two of the known max, probably not actually created", state.name)
+        di.set_finished(state.data_type)
+        di.print_status()
 
 
 def continue_fragment_download(di: DownloadInfo, state: FragThreadState) -> bool:
     """Determine whether to continue retrying a fragment download."""
-    if di.IsFinished(state.DataType):
+    if di.is_finished(state.data_type):
         return False
 
-    if di.FragMaxTries > 0 and state.Tries >= di.FragMaxTries:
-        state.FullRetries -= 1
-        LogDebug("%s: Fragment %d: %d/%d retries", state.Name, state.SeqNum, state.Tries, di.FragMaxTries)
-        di.PrintStatus()
+    if di.frag_max_tries > 0 and state.tries >= di.frag_max_tries:
+        state.full_retries -= 1
+        log_debug("%s: Fragment %d: %d/%d retries", state.name, state.seq_num, state.tries, di.frag_max_tries)
+        di.print_status()
 
-        if di.IsLive():
+        if di.is_live():
             get_video_info(di)
 
-        if not di.IsLive() or di.IsUnavailable():
-            if state.Is403:
-                if di.IsUnavailable():
-                    LogWarn("%s: Download link likely expired and stream is privated or members only, cannot continue download", state.Name)
+        if not di.is_live() or di.is_unavailable():
+            if state.is_403:
+                if di.is_unavailable():
+                    log_warn("%s: Download link likely expired and stream is privated or members only, cannot continue download", state.name)
                 else:
-                    LogWarn("%s: Download link has likely expired and the stream has probably finished processing.", state.Name)
-                    LogWarn("%s: You might want to use youtube-dl to download instead.", state.Name)
-                di.PrintStatus()
-                di.SetFinished(state.DataType)
+                    log_warn("%s: Download link has likely expired and the stream has probably finished processing.", state.name)
+                    log_warn("%s: You might want to use youtube-dl to download instead.", state.name)
+                di.print_status()
+                di.set_finished(state.data_type)
                 return False
-            elif state.MaxSeq > -1 and state.SeqNum < (state.MaxSeq - 2) and state.FullRetries > 0:
-                LogDebug("%s: More than two fragments away from the highest known fragment", state.Name)
-                LogDebug("%s: Will try grabbing the fragment %d more times", state.Name, state.FullRetries)
-                di.PrintStatus()
+            elif state.max_seq > -1 and state.seq_num < (state.max_seq - 2) and state.full_retries > 0:
+                log_debug("%s: More than two fragments away from the highest known fragment", state.name)
+                log_debug("%s: Will try grabbing the fragment %d more times", state.name, state.full_retries)
+                di.print_status()
             else:
-                di.SetFinished(state.DataType)
+                di.set_finished(state.data_type)
                 return False
         else:
-            LogDebug("%s: Fragment %d: Stream still live, continuing download attempt", state.Name, state.SeqNum)
-            di.PrintStatus()
-            state.Tries = 0
+            log_debug("%s: Fragment %d: Stream still live, continuing download attempt", state.name, state.seq_num)
+            di.print_status()
+            state.tries = 0
 
     return True
 
 
 def refresh_url(di: DownloadInfo, data_type: str, current_url: str):
     """Attempt to get a new download URL on 403 error."""
-    if not di.IsGVideoDDL():
-        new_url = di.GetDownloadUrl(data_type)
+    if not di.is_g_video_ddl():
+        new_url = di.get_download_url(data_type)
         if not current_url or new_url == current_url:
-            LogDebug("%s: Attempting to retrieve a new download URL", data_type)
-            di.PrintStatus()
+            log_debug("%s: Attempting to retrieve a new download URL", data_type)
+            di.print_status()
             get_video_info(di)
 
 
 def download_fragment(di: DownloadInfo, state: FragThreadState, data_queue: Queue):
     """Download a single fragment."""
-    state.Tries = 0
-    state.FullRetries = 3
-    state.Is403 = False
-    fname = f"{state.BaseFilePath}.frag{state.SeqNum}.ts"
+    state.tries = 0
+    state.full_retries = 3
+    state.is_403 = False
+    fname = f"{state.base_file_path}.frag{state.seq_num}.ts"
 
-    while state.Tries < di.FragMaxTries or di.FragMaxTries == 0:
-        if di.IsStopping():
+    while state.tries < di.frag_max_tries or di.frag_max_tries == 0:
+        if di.is_stopping():
             return
 
-        if di.FragMaxTries == 0:
-            state.Tries = 0
+        if di.frag_max_tries == 0:
+            state.tries = 0
 
-        base_url = di.GetDownloadUrl(state.DataType)
-        seq_url = base_url % state.SeqNum
+        base_url = di.get_download_url(state.data_type)
+        seq_url = base_url % state.seq_num
 
         dl_start = time.time()
 
         try:
-            host = di.GetDownloadUrlHost(state.DataType)
+            host = di.get_download_url_host(state.data_type)
             headers = {
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:87.0) Gecko/20100101 Firefox/87.0",
                 "Origin": "https://www.youtube.com",
@@ -1262,28 +1264,28 @@ def download_fragment(di: DownloadInfo, state: FragThreadState, data_queue: Queu
             resp = session.get(seq_url, headers=headers, timeout=(15, 30))
         except Exception as e:
             handle_frag_download_error(di, state, e)
-            state.Tries += 1
+            state.tries += 1
             if not continue_fragment_download(di, state):
                 return
-            time.sleep(state.SleepTime)
+            time.sleep(state.sleep_time)
             continue
 
         dl_duration = time.time() - dl_start
 
         if resp.status_code >= 400:
             handle_frag_http_error(di, state, resp.status_code, base_url)
-            state.Tries += 1
+            state.tries += 1
             if not continue_fragment_download(di, state):
                 return
-            time.sleep(state.SleepTime)
+            time.sleep(state.sleep_time)
             continue
 
         resp_data = resp.content
         if not resp_data:
-            state.Tries += 1
+            state.tries += 1
             if not continue_fragment_download(di, state):
                 return
-            time.sleep(state.SleepTime)
+            time.sleep(state.sleep_time)
             continue
 
         # Get X-Head-Seqnum header
@@ -1297,18 +1299,18 @@ def download_fragment(di: DownloadInfo, state: FragThreadState, data_queue: Queu
 
         mime_type = resp.headers.get("Content-Type", "")
 
-        if state.ToFile:
+        if state.to_file:
             try:
                 with open(fname, "wb") as f:
                     f.write(resp_data)
             except Exception as e:
-                LogDebug("%s: Failed to write fragment %d to file: %s", state.Name, state.SeqNum, str(e))
-                di.PrintStatus()
-                state.Tries += 1
+                log_debug("%s: Failed to write fragment %d to file: %s", state.name, state.seq_num, str(e))
+                di.print_status()
+                state.tries += 1
                 if not continue_fragment_download(di, state):
-                    TryDelete(fname)
+                    try_delete(fname)
                     return
-                time.sleep(state.SleepTime)
+                time.sleep(state.sleep_time)
                 continue
             data = None
         else:
@@ -1316,16 +1318,16 @@ def download_fragment(di: DownloadInfo, state: FragThreadState, data_queue: Queu
 
         # Slow fragment detection
         is_slow = False
-        if header_seqnum < 0 or state.SeqNum < (header_seqnum - 10):
-            is_slow = dl_duration > (di.TargetDuration * 1.5)
+        if header_seqnum < 0 or state.seq_num < (header_seqnum - 10):
+            is_slow = dl_duration > (di.target_duration * 1.5)
 
         data_queue.put(Fragment(
-            Seq=state.SeqNum,
-            XHeadSeqNum=header_seqnum,
-            FileName=fname,
-            Data=data,
-            Slow=is_slow,
-            MimeType=mime_type,
+            seq=state.seq_num,
+            x_head_seq_num=header_seqnum,
+            file_name=fname,
+            data=data,
+            slow=is_slow,
+            mime_type=mime_type,
         ))
         return
 
@@ -1339,11 +1341,11 @@ def download_frags(di: DownloadInfo, data_type: str, seq_queue: Queue,
     """Worker thread that downloads fragments from a sequence queue."""
     try:
         state = FragThreadState(
-            Name=name,
-            BaseFilePath=di.GetBaseFilePath(data_type),
-            DataType=data_type,
-            ToFile=di.FragFiles,
-            SleepTime=float(di.TargetDuration),
+            name=name,
+            base_file_path=di.get_base_file_path(data_type),
+            data_type=data_type,
+            to_file=di.frag_files,
+            sleep_time=float(di.target_duration),
         )
 
         end_seq = 0
@@ -1351,40 +1353,40 @@ def download_frags(di: DownloadInfo, data_type: str, seq_queue: Queue,
             try:
                 seq_info = seq_queue.get(timeout=1)
             except Empty:
-                if di.IsStopping() or di.IsFinished(data_type):
+                if di.is_stopping() or di.is_finished(data_type):
                     break
                 continue
 
-            if di.IsStopping() or di.IsFinished(data_type):
+            if di.is_stopping() or di.is_finished(data_type):
                 break
 
             # --capture-duration check
-            if di.CaptureDurationSecs != 0:
+            if di.capture_duration_secs != 0:
                 if end_seq == 0:
-                    cap_seq_cnt = int(math.ceil(di.CaptureDurationSecs / di.TargetDuration))
-                    end_seq = seq_info.CurSequence + cap_seq_cnt
-                elif seq_info.CurSequence >= end_seq:
-                    LogDebug("%s: Reached the maximum duration specified by --capture-duration.", name)
-                    di.SetFinished(data_type)
+                    cap_seq_cnt = int(math.ceil(di.capture_duration_secs / di.target_duration))
+                    end_seq = seq_info.cur_sequence + cap_seq_cnt
+                elif seq_info.cur_sequence >= end_seq:
+                    log_debug("%s: Reached the maximum duration specified by --capture-duration.", name)
+                    di.set_finished(data_type)
                     break
 
-            if seq_info.MaxSequence > -1 and not di.IsLive() and seq_info.CurSequence >= seq_info.MaxSequence:
-                LogDebug("%s: Stream is finished and highest sequence reached", name)
-                di.SetFinished(data_type)
+            if seq_info.max_sequence > -1 and not di.is_live() and seq_info.cur_sequence >= seq_info.max_sequence:
+                log_debug("%s: Stream is finished and highest sequence reached", name)
+                di.set_finished(data_type)
                 break
 
-            state.SeqNum = seq_info.CurSequence
-            state.MaxSeq = seq_info.MaxSequence
+            state.seq_num = seq_info.cur_sequence
+            state.max_seq = seq_info.max_sequence
 
             download_fragment(di, state, data_queue)
     except Exception as e:
-        LogError("%s: Unhandled error in download worker: %s", name, str(e))
+        log_error("%s: Unhandled error in download worker: %s", name, str(e))
         import traceback
-        LogDebug("%s", traceback.format_exc())
+        log_debug("%s", traceback.format_exc())
     finally:
-        di.DecrementJobs(data_type)
-        LogDebug("%s: exiting", name)
-        di.PrintStatus()
+        di.decrement_jobs(data_type)
+        log_debug("%s: exiting", name)
+        di.print_status()
 
 
 # ---------------------------------------------------------------------------
@@ -1395,8 +1397,8 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
                     progress_queue: Queue, done_event: threading.Event):
     """Orchestrate downloading a single stream (audio or video).
     Manages worker threads and sequential fragment writing."""
-    data_queue = Queue(maxsize=di.Jobs * 2)
-    seq_queue = Queue(maxsize=di.Jobs * 2)
+    data_queue = Queue(maxsize=di.jobs * 2)
+    seq_queue = Queue(maxsize=di.jobs * 2)
     closed = False
     cur_frag = 0
     start_frag = 0
@@ -1410,7 +1412,7 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
     if data_type == DTYPE_AUDIO:
         itag = AUDIO_ITAG
     else:
-        itag = di.Quality
+        itag = di.quality
 
     log_name = f"{data_type}-download"
 
@@ -1418,60 +1420,60 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
     f = None
     resumed_state = False
 
-    if itag in di.DLState and di.DLState[itag].Fragments > 0:
-        if di.LiveFromSq != 0:
-            if di.LiveFromVal:
-                LogWarn("%s: Option --live-from is being ignored as a download is being resumed.", data_type)
-            if di.StartDelaySecs != 0:
-                LogWarn("%s: Option --start-delay is being ignored as a download is being resumed.", data_type)
+    if itag in di.dl_state and di.dl_state[itag].fragments > 0:
+        if di.live_from_sq != 0:
+            if di.live_from_val:
+                log_warn("%s: Option --live-from is being ignored as a download is being resumed.", data_type)
+            if di.start_delay_secs != 0:
+                log_warn("%s: Option --start-delay is being ignored as a download is being resumed.", data_type)
 
         try:
             f = open(data_file, "r+b")
-            f.seek(di.DLState[itag].Size)
+            f.seek(di.dl_state[itag].size)
             resumed_state = True
         except FileNotFoundError:
-            LogDebug("%s: State file found but data file missing. Starting fresh.", data_type)
+            log_debug("%s: State file found but data file missing. Starting fresh.", data_type)
             f = open(data_file, "wb")
             resumed_state = False
         except Exception as e:
-            LogWarn("%s: Failed to open %s to resume: %s", data_type, data_file, str(e))
-            LogWarn("%s: Will truncate and start from the beginning", data_type)
+            log_warn("%s: Failed to open %s to resume: %s", data_type, data_file, str(e))
+            log_warn("%s: Will truncate and start from the beginning", data_type)
             f = open(data_file, "wb")
             resumed_state = False
     else:
         f = open(data_file, "wb")
 
     if resumed_state:
-        start_frag = di.DLState[itag].StartFrag
-        cur_frag = start_frag + di.DLState[itag].Fragments
-        max_seqs = di.LastSq
-        LogInfo("%s: Resuming download from sequence %d", data_type, cur_frag)
+        start_frag = di.dl_state[itag].start_frag
+        cur_frag = start_frag + di.dl_state[itag].fragments
+        max_seqs = di.last_sq
+        log_info("%s: Resuming download from sequence %d", data_type, cur_frag)
     else:
-        if di.LastSq >= 0:
-            cur_frag = di.LastSq - (LIVE_MAXIMUM_SEEKABLE // di.TargetDuration)
-            max_seqs = di.LastSq
+        if di.last_sq >= 0:
+            cur_frag = di.last_sq - (LIVE_MAXIMUM_SEEKABLE // di.target_duration)
+            max_seqs = di.last_sq
 
-        if di.LiveFromSq != 0:
-            cur_frag = di.LiveFromSq
+        if di.live_from_sq != 0:
+            cur_frag = di.live_from_sq
             start_frag = cur_frag
-            LogDebug("%s: Starting from sequence %d (latest is %d)", data_type, start_frag, di.LastSq)
+            log_debug("%s: Starting from sequence %d (latest is %d)", data_type, start_frag, di.last_sq)
         elif cur_frag > 0:
-            LogWarn("%s: YT only retains the livestream 7 days past for seeking, starting from sequence %d (latest is %d)", data_type, cur_frag, di.LastSq)
+            log_warn("%s: YT only retains the livestream 7 days past for seeking, starting from sequence %d (latest is %d)", data_type, cur_frag, di.last_sq)
             start_frag = cur_frag
         else:
             cur_frag = 0
 
-        if itag not in di.DLState:
-            di.DLState[itag] = DownloadState()
-        di.DLState[itag].StartFrag = start_frag
+        if itag not in di.dl_state:
+            di.dl_state[itag] = DownloadState()
+        di.dl_state[itag].start_frag = start_frag
 
     cur_seq = cur_frag
 
     # Spawn initial worker threads
     workers_started = 0
-    for _ in range(di.Jobs):
+    for _ in range(di.jobs):
         job_name = f"{data_type}{workers_started + 1}"
-        di.IncrementJobs(data_type)
+        di.increment_jobs(data_type)
         seq_queue.put(SeqChanInfo(cur_seq, max_seqs))
         cur_seq += 1
         active_downloads += 1
@@ -1489,10 +1491,10 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
     try:
         while True:
             data_received = False
-            downloading = di.GetActiveJobCount(data_type) > 0
-            stopping = di.IsStopping()
+            downloading = di.get_active_job_count(data_type) > 0
+            stopping = di.is_stopping()
 
-            if stopping or not downloading or di.IsFinished(data_type):
+            if stopping or not downloading or di.is_finished(data_type):
                 if not closed:
                     # Drain seq_queue to unblock workers
                     while not seq_queue.empty():
@@ -1518,11 +1520,11 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
                 if not downloading or stopping or closed:
                     continue
 
-                if data.XHeadSeqNum > max_seqs:
-                    max_seqs = data.XHeadSeqNum
+                if data.x_head_seq_num > max_seqs:
+                    max_seqs = data.x_head_seq_num
 
                 if max_seqs > 0:
-                    while (cur_seq <= max_seqs + 1 and active_downloads < di.Jobs) or active_downloads < 1:
+                    while (cur_seq <= max_seqs + 1 and active_downloads < di.jobs) or active_downloads < 1:
                         seq_queue.put(SeqChanInfo(cur_seq, max_seqs))
                         cur_seq += 1
                         active_downloads += 1
@@ -1531,19 +1533,19 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
                     cur_seq += 1
                     active_downloads += 1
 
-                if data.Slow:
-                    if (data.Seq - last_slow_frag) < 10:
+                if data.slow:
+                    if (data.seq - last_slow_frag) < 10:
                         slow_frags += 1
                     else:
                         slow_frags = 1
-                    last_slow_frag = data.Seq
+                    last_slow_frag = data.seq
 
             if not data_to_write and not data_received and downloading:
                 if not stopping and active_downloads <= 0:
-                    LogDebug("%s: Somehow no active downloads and no data to write", log_name)
-                    LogDebug("%s: Fragment this happened at: %d", log_name, cur_frag)
-                    di.PrintStatus()
-                    while active_downloads < di.GetActiveJobCount(data_type):
+                    log_debug("%s: Somehow no active downloads and no data to write", log_name)
+                    log_debug("%s: Fragment this happened at: %d", log_name, cur_frag)
+                    di.print_status()
+                    while active_downloads < di.get_active_job_count(data_type):
                         seq_queue.put(SeqChanInfo(cur_seq, max_seqs))
                         cur_seq += 1
                         active_downloads += 1
@@ -1555,59 +1557,59 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
             i = 0
             while i < len(data_to_write) and tries > 0:
                 data = data_to_write[i]
-                if data.Seq != cur_frag:
+                if data.seq != cur_frag:
                     i += 1
                     continue
 
                 # Read fragment data from file if needed
-                if di.FragFiles:
+                if di.frag_files:
                     try:
-                        with open(data.FileName, "rb") as frag_f:
+                        with open(data.file_name, "rb") as frag_f:
                             read_bytes = frag_f.read()
-                        data.Data = bytearray(read_bytes)
+                        data.data = bytearray(read_bytes)
                     except Exception as e:
                         tries -= 1
-                        LogWarn("%s: Error when attempting to read fragment %d for writing: %s", log_name, cur_frag, str(e))
-                        di.PrintStatus()
+                        log_warn("%s: Error when attempting to read fragment %d for writing: %s", log_name, cur_frag, str(e))
+                        di.print_status()
                         if tries > 0:
-                            LogWarn("%s: Will try %d more time(s)", log_name, tries)
-                            di.PrintStatus()
+                            log_warn("%s: Will try %d more time(s)", log_name, tries)
+                            di.print_status()
                         continue
 
-                buf = bytes(data.Data)
+                buf = bytes(data.data)
 
                 # Remove unwanted MP4 atoms
-                mime = data.MimeType
+                mime = data.mime_type
                 if buf:
                     if mime.endswith("/mp4") or not mime:
                         bad_atoms = ["sidx"]
                         if cur_frag != start_frag:
                             bad_atoms.append("ftyp")
-                        buf = RemoveAtoms(bytearray(buf), *bad_atoms)
+                        buf = remove_atoms(bytearray(buf), *bad_atoms)
                         buf = bytes(buf)
 
                 try:
                     f.write(buf)
                 except Exception as e:
                     tries -= 1
-                    LogWarn("%s: Error when attempting to write fragment %d to %s: %s", log_name, cur_frag, data_file, str(e))
-                    di.PrintStatus()
+                    log_warn("%s: Error when attempting to write fragment %d to %s: %s", log_name, cur_frag, data_file, str(e))
+                    di.print_status()
                     if tries > 0:
-                        LogWarn("%s: Will try %d more time(s)", log_name, tries)
-                        di.PrintStatus()
+                        log_warn("%s: Will try %d more time(s)", log_name, tries)
+                        di.print_status()
                     continue
 
                 cur_frag += 1
                 progress_queue.put(ProgressInfo(itag, len(buf), max_seqs, start_frag))
 
-                if di.FragFiles:
+                if di.frag_files:
                     try:
-                        Path(data.FileName).unlink()
+                        Path(data.file_name).unlink()
                     except OSError as e:
-                        LogWarn("%s: Error deleting fragment %d: %s", log_name, data.Seq, str(e))
-                        LogWarn("%s: Will try again after the download has finished", log_name)
-                        deleting_frags.append(data.FileName)
-                        di.PrintStatus()
+                        log_warn("%s: Error deleting fragment %d: %s", log_name, data.seq, str(e))
+                        log_warn("%s: Will try again after the download has finished", log_name)
+                        deleting_frags.append(data.file_name)
+                        di.print_status()
 
                 data_to_write.pop(i)
                 tries = 10
@@ -1617,26 +1619,26 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
                 break
 
             if tries <= 0:
-                LogWarn("%s: Stopping download, something must be wrong...", log_name)
-                di.PrintStatus()
-                di.Stop()
+                log_warn("%s: Stopping download, something must be wrong...", log_name)
+                di.print_status()
+                di.stop()
     except Exception as e:
-        LogError("%s: Unhandled error in download stream: %s", log_name, str(e))
+        log_error("%s: Unhandled error in download stream: %s", log_name, str(e))
         import traceback
-        LogDebug("%s", traceback.format_exc())
+        log_debug("%s", traceback.format_exc())
     finally:
         f.close()
 
         # Cleanup remaining fragment files
-        if di.FragFiles:
+        if di.frag_files:
             for d in data_to_write:
-                TryDelete(d.FileName)
+                try_delete(d.file_name)
         for d in deleting_frags:
-            TryDelete(d)
+            try_delete(d)
 
         done_event.set()
-        LogDebug("%s thread closing", log_name)
-        di.PrintStatus()
+        log_debug("%s thread closing", log_name)
+        di.print_status()
 
 
 # ---------------------------------------------------------------------------
@@ -1645,12 +1647,12 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
 
 def parse_netscape_cookies(di: DownloadInfo, cookie_file: str) -> bool:
     """Parse netscape cookies file and set on HTTP session."""
-    from utils import ParseNetscapeCookiesFile
+    from utils import parse_netscape_cookies_file
     try:
-        jar = ParseNetscapeCookiesFile(cookie_file)
+        jar = parse_netscape_cookies_file(cookie_file)
         session.cookies = jar
-        LogInfo("Loaded cookie file %s", cookie_file)
+        log_info("Loaded cookie file %s", cookie_file)
         return True
     except Exception as e:
-        LogError("Failed to load cookies file: %s", str(e))
+        log_error("Failed to load cookies file: %s", str(e))
         return False

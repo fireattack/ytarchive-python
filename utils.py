@@ -27,9 +27,9 @@ LOGLEVEL_INFO = 3
 LOGLEVEL_DEBUG = 4
 LOGLEVEL_TRACE = 5
 
-KiB = 1024.0
-MiB = 1024.0 * 1024.0
-GiB = 1024.0 * 1024.0 * 1024.0
+KIB = 1024.0
+MIB = 1024.0 * 1024.0
+GIB = 1024.0 * 1024.0 * 1024.0
 
 DEFAULT_POLL_TIME = 15
 MINIMUM_MONITOR_TIME = 30
@@ -97,29 +97,29 @@ def _log(level: int, msg: str, *args):
     sys.stderr.flush()
 
 
-def LogError(msg: str, *args):
+def log_error(msg: str, *args):
     _log(LOGLEVEL_ERROR, msg, *args)
 
 
-def LogWarn(msg: str, *args):
+def log_warn(msg: str, *args):
     _log(LOGLEVEL_WARNING, msg, *args)
 
 
-def LogInfo(msg: str, *args):
+def log_info(msg: str, *args):
     _log(LOGLEVEL_INFO, msg, *args)
 
 
-def LogDebug(msg: str, *args):
+def log_debug(msg: str, *args):
     _log(LOGLEVEL_DEBUG, msg, *args)
 
 
-def SetLoglevel(level: int):
+def set_log_level(level: int):
     """Set the global log level."""
     global loglevel
     loglevel = level
 
 
-def LogGeneral(msg: str, *args):
+def log_general(msg: str, *args):
     """Log a message always (even in quiet mode)."""
     formatted = msg % args if args else msg
     ts = time.strftime("%Y/%m/%d %H:%M:%S")
@@ -139,7 +139,7 @@ status_newlines: bool = False
 _network_type = "tcp"  # "tcp", "tcp4", "tcp6"
 
 
-def InitializeHttpClient(proxy: Optional[str] = None):
+def initialize_http_client(proxy: Optional[str] = None):
     """Set up the HTTP session with proper headers and optional proxy."""
     global session, proxy_url
 
@@ -166,7 +166,7 @@ def InitializeHttpClient(proxy: Optional[str] = None):
     session.mount("https://", adapter)
 
 
-def DownloadThumbnail(url: str, fname: str, file_mode: int = 0o644) -> bool:
+def download_thumbnail(url: str, fname: str, file_mode: int = 0o644) -> bool:
     """Download a thumbnail image to the given file."""
     try:
         resp = session.get(url, timeout=(15, 30))
@@ -177,8 +177,8 @@ def DownloadThumbnail(url: str, fname: str, file_mode: int = 0o644) -> bool:
             Path(fname).chmod(file_mode)
         return True
     except Exception as e:
-        LogWarn("Failed to download thumbnail: %v", str(e))
-        TryDelete(fname)
+        log_warn("Failed to download thumbnail: %v", str(e))
+        try_delete(fname)
         return False
 
 
@@ -208,7 +208,7 @@ _FILENAME_REPLACEMENTS_LOOKALIKE = {
 FILENAME_FORMAT_BLACKLIST = ["description"]
 
 
-def SterilizeFilename(s: str, lookalike_chars: bool = False) -> str:
+def sterilize_filename(s: str, lookalike_chars: bool = False) -> str:
     """Replace invalid filename characters."""
     replacements = _FILENAME_REPLACEMENTS_LOOKALIKE if lookalike_chars else _FILENAME_REPLACEMENTS_NORMAL
     for old, new in replacements.items():
@@ -216,7 +216,7 @@ def SterilizeFilename(s: str, lookalike_chars: bool = False) -> str:
     return s
 
 
-def FormatPythonMapString(format_str: str, vals: dict) -> str:
+def format_python_map_string(format_str: str, vals: dict) -> str:
     """Format a string using Python's %(key)s style, similar to youtube-dl.
     Raises KeyError if a key is not found."""
     # Blacklist certain keys
@@ -229,7 +229,7 @@ def FormatPythonMapString(format_str: str, vals: dict) -> str:
     return format_str % safe_vals
 
 
-def TruncateString(s: str, max_bytes: int) -> str:
+def truncate_string(s: str, max_bytes: int) -> str:
     """Truncate string to not exceed max_bytes in UTF-8 encoding."""
     encoded = s.encode("utf-8")
     if len(encoded) <= max_bytes:
@@ -248,28 +248,28 @@ def TruncateString(s: str, max_bytes: int) -> str:
     return result
 
 
-def FormatFilename(format_str: str, vals: dict, lookalike_chars: bool = False) -> str:
+def format_filename(format_str: str, vals: dict, lookalike_chars: bool = False) -> str:
     """Format output filename with sanitized values."""
     fname_vals = {}
     for k, v in vals.items():
-        fname_vals[k] = SterilizeFilename(v, lookalike_chars)
+        fname_vals[k] = sterilize_filename(v, lookalike_chars)
 
     try:
-        result = FormatPythonMapString(format_str, fname_vals)
+        result = format_python_map_string(format_str, fname_vals)
     except KeyError as e:
         raise KeyError(f"Unknown output format key: {e}")
 
     # Check filename length
     fname = Path(result).name
     if len(fname.encode("utf-8")) > MAX_FILENAME_LENGTH:
-        LogWarn("Formatted filename is too long. Truncating the title to try and fix.")
+        log_warn("Formatted filename is too long. Truncating the title to try and fix.")
         bytes_over = len(fname.encode("utf-8")) - MAX_FILENAME_LENGTH
         title = fname_vals.get("title", "")
         truncate_len = len(title.encode("utf-8")) - bytes_over
         if truncate_len > 0:
-            fname_vals["title"] = TruncateString(title, truncate_len)
+            fname_vals["title"] = truncate_string(title, truncate_len)
             try:
-                result = FormatPythonMapString(format_str, fname_vals)
+                result = format_python_map_string(format_str, fname_vals)
             except KeyError:
                 pass
 
@@ -298,7 +298,7 @@ def _get_atoms(data: bytes) -> dict:
     return atoms
 
 
-def RemoveAtoms(data: bytearray, *atom_names: str) -> bytearray:
+def remove_atoms(data: bytearray, *atom_names: str) -> bytearray:
     """Remove specified MP4 atoms from the data buffer. Modifies in place."""
     atoms = _get_atoms(bytes(data))
 
@@ -320,53 +320,53 @@ def RemoveAtoms(data: bytearray, *atom_names: str) -> bytearray:
 # File Helpers
 # ---------------------------------------------------------------------------
 
-def Exists(filepath: str) -> bool:
+def exists(filepath: str) -> bool:
     """Check if a file exists."""
     return Path(filepath).exists()
 
 
-def TryDelete(fname: str):
+def try_delete(fname: str):
     """Try to delete a file, ignoring if it doesn't exist."""
     try:
         if Path(fname).exists():
-            LogInfo("Deleting file %s", fname)
+            log_info("Deleting file %s", fname)
             Path(fname).unlink()
     except OSError as e:
-        LogWarn("Error deleting file: %s", str(e))
+        log_warn("Error deleting file: %s", str(e))
 
 
-def TryMove(src: str, dst: str) -> Optional[Exception]:
+def try_move(src: str, dst: str) -> Optional[Exception]:
     """Try to rename/move a file. Falls back to copy+delete. Returns error or None."""
     if not Path(src).exists():
         return None
 
-    LogInfo("Moving file %s to %s", src, dst)
+    log_info("Moving file %s to %s", src, dst)
     try:
         Path(src).rename(dst)
         return None
     except OSError as e:
-        LogWarn("Error moving file: %s", str(e))
-        LogWarn("Attempting to copy file instead")
+        log_warn("Error moving file: %s", str(e))
+        log_warn("Attempting to copy file instead")
         try:
             shutil.copy2(src, dst)
             Path(src).unlink()
             return None
         except OSError as e2:
-            LogWarn("Error copying file: %s", str(e2))
+            log_warn("Error copying file: %s", str(e2))
             return e2
 
 
-def CleanupFiles(files: list):
+def cleanup_files(files: list):
     """Delete all files in the list."""
     for f in files:
-        TryDelete(f)
+        try_delete(f)
 
 
 # ---------------------------------------------------------------------------
 # Netscape Cookies Parser
 # ---------------------------------------------------------------------------
 
-def ParseNetscapeCookiesFile(filepath: str) -> requests.cookies.RequestsCookieJar:
+def parse_netscape_cookies_file(filepath: str) -> requests.cookies.RequestsCookieJar:
     """Parse a Netscape-format cookies.txt file into a RequestsCookieJar."""
     jar = requests.cookies.RequestsCookieJar()
     try:
@@ -398,9 +398,9 @@ def ParseNetscapeCookiesFile(filepath: str) -> requests.cookies.RequestsCookieJa
                     secure=secure,
                     expires=expires,
                 )
-        LogDebug("Loaded %d cookies from %s", len(jar), filepath)
+        log_debug("Loaded %d cookies from %s", len(jar), filepath)
     except Exception as e:
-        LogWarn("Failed to load cookies file: %s", str(e))
+        log_warn("Failed to load cookies file: %s", str(e))
     return jar
 
 
@@ -408,19 +408,19 @@ def ParseNetscapeCookiesFile(filepath: str) -> requests.cookies.RequestsCookieJa
 # Formatting Utilities
 # ---------------------------------------------------------------------------
 
-def FormatSize(bsize: int) -> str:
+def format_size(bsize: int) -> str:
     """Format a byte count into human-readable form (KiB, MiB, GiB)."""
     b = float(bsize)
-    if b >= GiB:
-        return f"{b / GiB:.2f}GiB"
-    elif b >= MiB:
-        return f"{b / MiB:.2f}MiB"
-    elif b >= KiB:
-        return f"{b / KiB:.2f}KiB"
+    if b >= GIB:
+        return f"{b / GIB:.2f}GiB"
+    elif b >= MIB:
+        return f"{b / MIB:.2f}MiB"
+    elif b >= KIB:
+        return f"{b / KIB:.2f}KiB"
     return f"{bsize}B"
 
 
-def SecondsToDurationStr(seconds: int) -> str:
+def seconds_to_duration_str(seconds: int) -> str:
     """Convert seconds to a human-readable duration string like '1d5h30m10s'."""
     days = seconds // 86400
     seconds -= days * 86400
@@ -440,7 +440,7 @@ def SecondsToDurationStr(seconds: int) -> str:
     return "".join(parts)
 
 
-def SecondsToTimeStr(seconds: int) -> str:
+def seconds_to_time_str(seconds: int) -> str:
     """Convert seconds to HH:MM:SS or MM:SS format."""
     hours = seconds // 3600
     seconds -= hours * 3600
@@ -452,12 +452,12 @@ def SecondsToTimeStr(seconds: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def SecondsToDurationAndTimeStr(seconds: int) -> str:
+def seconds_to_duration_and_time_str(seconds: int) -> str:
     """Combined duration + time string like '1h30m (1:30:00)'."""
-    return f"{SecondsToDurationStr(seconds)} ({SecondsToTimeStr(seconds)})"
+    return f"{seconds_to_duration_str(seconds)} ({seconds_to_time_str(seconds)})"
 
 
-def Contains(arr: list, val: str) -> bool:
+def contains(arr: list, val: str) -> bool:
     """Case-insensitive linear search."""
     val_lower = val.strip().lower()
     for s in arr:
@@ -472,12 +472,12 @@ def Contains(arr: list, val: str) -> bool:
 
 class VideoItag:
     def __init__(self, h264: int, vp9: int, av1: int):
-        self.H264 = h264
-        self.VP9 = vp9
-        self.AV1 = av1
+        self.h264 = h264
+        self.vp9 = vp9
+        self.av1 = av1
 
 
-VideoLabelItags = {
+video_label_itags = {
     "audio_only": VideoItag(0, 0, 0),
     "144p":       VideoItag(160, 278, 394),
     "240p":       VideoItag(133, 242, 395),
@@ -493,7 +493,7 @@ VideoLabelItags = {
     "2160p60":    VideoItag(305, 315, 401),
 }
 
-VideoQualities = [
+video_qualities = [
     "audio_only",
     "144p",
     "240p",
@@ -510,12 +510,12 @@ VideoQualities = [
 ]
 
 
-def MakeQualityList(formats: list) -> str:
+def make_quality_list(formats: list) -> str:
     """Make a comma-separated list of available formats."""
     return ", ".join(formats) + ", best"
 
 
-def ParseQualitySelection(formats: list, quality: str) -> list:
+def parse_quality_selection(formats: list, quality: str) -> list:
     """Parse a slash-delimited user quality selection string."""
     sel_qualities = []
     quality = quality.strip().lower()
@@ -540,9 +540,9 @@ def ParseQualitySelection(formats: list, quality: str) -> list:
     return sel_qualities
 
 
-def GetQualityFromUser(formats: list, waiting: bool = False) -> list:
+def get_quality_from_user(formats: list, waiting: bool = False) -> list:
     """Prompt the user to select a video quality."""
-    qualities = MakeQualityList(formats)
+    qualities = make_quality_list(formats)
 
     if waiting:
         print(
@@ -559,11 +559,11 @@ def GetQualityFromUser(formats: list, waiting: bool = False) -> list:
 
     sel_qualities = []
     while len(sel_qualities) < 1:
-        quality = GetUserInput("Enter desired video quality: ")
+        quality = get_user_input("Enter desired video quality: ")
         quality = quality.strip().lower()
         if len(quality) == 0:
             quality = DEFAULT_VIDEO_QUALITY
-        sel_qualities = ParseQualitySelection(formats, quality)
+        sel_qualities = parse_quality_selection(formats, quality)
 
     return sel_qualities
 
@@ -572,7 +572,7 @@ def GetQualityFromUser(formats: list, waiting: bool = False) -> list:
 # User Input with Signal Handling
 # ---------------------------------------------------------------------------
 
-def GetUserInput(prompt: str) -> str:
+def get_user_input(prompt: str) -> str:
     """Get user input, handling Ctrl+C gracefully."""
     try:
         return input(prompt).strip()
@@ -581,9 +581,9 @@ def GetUserInput(prompt: str) -> str:
         sys.exit(1)
 
 
-def GetYesNo(prompt: str) -> bool:
+def get_yes_no(prompt: str) -> bool:
     """Ask a yes/no question."""
-    answer = GetUserInput(f"{prompt} [y/N]: ")
+    answer = get_user_input(f"{prompt} [y/N]: ")
     return answer.lower().startswith("y")
 
 
@@ -591,7 +591,7 @@ def GetYesNo(prompt: str) -> bool:
 # ffmpeg Argument Builder
 # ---------------------------------------------------------------------------
 
-def GetFFmpegArgs(audio_file: str, video_file: str, thumbnail: str,
+def get_ffmpeg_args(audio_file: str, video_file: str, thumbnail: str,
                   file_dir: str, file_name: str, only_audio: bool,
                   only_video: bool, download_thumbnail: bool,
                   mkv: bool, add_meta: bool, metadata: dict) -> dict:
@@ -670,11 +670,11 @@ def GetFFmpegArgs(audio_file: str, video_file: str, thumbnail: str,
 # Subprocess Execution
 # ---------------------------------------------------------------------------
 
-def Execute(prog: str, args: list) -> int:
+def execute(prog: str, args: list) -> int:
     """Execute an external process. Returns exit code."""
     import subprocess
 
-    LogDebug("Executing command: %s %s", prog, " ".join(map(str, args)))
+    log_debug("Executing command: %s %s", prog, " ".join(map(str, args)))
 
     try:
         result = subprocess.run(
@@ -687,10 +687,10 @@ def Execute(prog: str, args: list) -> int:
             sys.stderr.buffer.flush()
         return result.returncode
     except FileNotFoundError:
-        LogError("%s not found.", prog)
+        log_error("%s not found.", prog)
         return -1
     except Exception as e:
-        LogError("Error executing %s: %s", prog, str(e))
+        log_error("Error executing %s: %s", prog, str(e))
         return -1
 
 
@@ -698,10 +698,7 @@ def Execute(prog: str, args: list) -> int:
 # Miscellaneous
 # ---------------------------------------------------------------------------
 
-def IsFragmented(url: str) -> bool:
+def is_fragmented(url: str) -> bool:
     """Check if a URL is for a fragmented (livestream) stream.
     Fragmented streams have 'noclen' in the URL, VODs have 'clen'."""
     return "noclen" in url.lower()
-
-
-

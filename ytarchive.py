@@ -9,12 +9,12 @@ import threading
 import time
 from utils import (
     setup as platform_setup,
-    SetLoglevel,
+    set_log_level,
     LOGLEVEL_QUIET, LOGLEVEL_ERROR, LOGLEVEL_INFO, LOGLEVEL_DEBUG, LOGLEVEL_TRACE,
-    LogError, LogGeneral, LogInfo, LogWarn,
-    InitializeHttpClient, FormatSize, GetFFmpegArgs, Execute,
-    TryMove, TryDelete, CleanupFiles, Exists, GetUserInput, GetYesNo,
-    DownloadThumbnail, FormatFilename,
+    log_error, log_general, log_info, log_warn,
+    initialize_http_client, format_size, get_ffmpeg_args, execute,
+    try_move, try_delete, cleanup_files, exists, get_user_input, get_yes_no,
+    download_thumbnail, format_filename,
     ACTION_ASK, ACTION_DO, ACTION_DO_NOT,
     DTYPE_AUDIO, DTYPE_VIDEO, AUDIO_ITAG, AUDIO_ONLY_QUALITY,
     DEFAULT_FILENAME_FORMAT, DEFAULT_POLL_TIME, MINIMUM_MONITOR_TIME, DEFAULT_MONITOR_TIME,
@@ -157,41 +157,41 @@ def run(args: argparse.Namespace) -> int:
 
     # Configure logging
     if args.trace:
-        SetLoglevel(LOGLEVEL_TRACE)
+        set_log_level(LOGLEVEL_TRACE)
     elif args.debug:
-        SetLoglevel(LOGLEVEL_DEBUG)
+        set_log_level(LOGLEVEL_DEBUG)
     elif args.verbose:
-        SetLoglevel(LOGLEVEL_INFO)
+        set_log_level(LOGLEVEL_INFO)
     elif args.error:
-        SetLoglevel(LOGLEVEL_ERROR)
+        set_log_level(LOGLEVEL_ERROR)
     elif args.quiet:
-        SetLoglevel(LOGLEVEL_QUIET)
+        set_log_level(LOGLEVEL_QUIET)
 
     import utils as _u
     _u.status_newlines = args.newline
 
     # Initialize HTTP client
     proxy = args.proxy if hasattr(args, 'proxy') else None
-    InitializeHttpClient(proxy)
+    initialize_http_client(proxy)
 
     # Transfer args to download info
-    di.VP9 = args.vp9
-    di.AV1 = args.av1
-    di.H264 = args.h264
-    di.FragMaxTries = args.retry_frags
-    di.MembersOnly = False  # detection happens via cookies
-    di.FileMode = args.file_permissions
-    di.DirMode = args.directory_permissions
-    di.VisitorData = args.visitor_data or ""
-    di.PoToken = args.potoken or ""
-    di.YtdlpPath = args.ytdlp_path
-    di.YtdlpOpts = args.ytdlp_opts
+    di.vp9 = args.vp9
+    di.av1 = args.av1
+    di.h264 = args.h264
+    di.frag_max_tries = args.retry_frags
+    di.members_only = False  # detection happens via cookies
+    di.file_mode = args.file_permissions
+    di.dir_mode = args.directory_permissions
+    di.visitor_data = args.visitor_data or ""
+    di.po_token = args.potoken or ""
+    di.ytdlp_path = args.ytdlp_path
+    di.ytdlp_opts = args.ytdlp_opts
 
     # Wait/merge/save defaults
     if args.wait:
-        di.Wait = ACTION_DO
+        di.wait = ACTION_DO
     elif args.no_wait:
-        di.Wait = ACTION_DO_NOT
+        di.wait = ACTION_DO_NOT
 
     if args.merge:
         merge_on_cancel = ACTION_DO
@@ -200,32 +200,32 @@ def run(args: argparse.Namespace) -> int:
 
     if args.no_save_state or args.disable_save_state:
         save_state_on_cancel = ACTION_DO_NOT
-        di.DisableSaveState = True
+        di.disable_save_state = True
     elif args.save_state:
         save_state_on_cancel = ACTION_DO
 
     if args.no_audio:
-        di.VideoOnly = True
+        di.video_only = True
     elif args.no_video:
-        di.Quality = AUDIO_ONLY_QUALITY
-        di.AudioOnly = True
+        di.quality = AUDIO_ONLY_QUALITY
+        di.audio_only = True
 
-    di.FragFiles = not args.no_frag_files
+    di.frag_files = not args.no_frag_files
 
     # Thread count
     if args.threads > 1:
-        di.Jobs = args.threads
+        di.jobs = args.threads
 
     # Monitor channel
     if args.monitor_channel:
-        if di.RetrySecs < MINIMUM_MONITOR_TIME:
-            di.RetrySecs = DEFAULT_MONITOR_TIME
+        if di.retry_secs < MINIMUM_MONITOR_TIME:
+            di.retry_secs = DEFAULT_MONITOR_TIME
 
     # Retry stream
     if args.retry_stream is not None:
-        di.RetrySecs = args.retry_stream
-        if di.RetrySecs > 0 and di.RetrySecs < DEFAULT_POLL_TIME:
-            di.RetrySecs = DEFAULT_POLL_TIME
+        di.retry_secs = args.retry_stream
+        if di.retry_secs > 0 and di.retry_secs < DEFAULT_POLL_TIME:
+            di.retry_secs = DEFAULT_POLL_TIME
 
     # URL and quality from positional args
     url = args.url
@@ -233,25 +233,25 @@ def run(args: argparse.Namespace) -> int:
 
     # Handle --video-url / --audio-url (direct Google Video URLs)
     if args.video_url:
-        di.URL = args.video_url
-        di.SetDownloadUrl(DTYPE_VIDEO, args.video_url)
+        di.url = args.video_url
+        di.set_download_url(DTYPE_VIDEO, args.video_url)
     if args.audio_url:
-        if not di.URL:
-            di.URL = args.audio_url
-        di.SetDownloadUrl(DTYPE_AUDIO, args.audio_url)
+        if not di.url:
+            di.url = args.audio_url
+        di.set_download_url(DTYPE_AUDIO, args.audio_url)
 
     if args.monitor_channel and not quality:
-        LogError("You must specify a channel AND quality when choosing to monitor a channel")
+        log_error("You must specify a channel AND quality when choosing to monitor a channel")
         return 1
 
-    if not di.URL:
+    if not di.url:
         if url and quality:
-            di.URL = url
-            di.SelectedQuality = quality
+            di.url = url
+            di.selected_quality = quality
         elif url:
-            di.URL = url
+            di.url = url
         else:
-            di.URL = GetUserInput("Enter a youtube livestream URL: ")
+            di.url = get_user_input("Enter a youtube livestream URL: ")
 
     # Parse the URL
     if not parse_input_url(di):
@@ -263,9 +263,9 @@ def run(args: argparse.Namespace) -> int:
 
     # Validate filename format
     try:
-        FormatFilename(fname_format, di.FormatInfo, lookalike_chars)
+        format_filename(fname_format, di.format_info, lookalike_chars)
     except Exception as e:
-        LogError("%s", str(e))
+        log_error("%s", str(e))
         return 1
 
     # Load cookies
@@ -277,32 +277,32 @@ def run(args: argparse.Namespace) -> int:
     # Parse duration options
     if args.start_delay:
         if args.live_from:
-            LogError("You cannot use both --start-delay and --live-from at the same time.")
+            log_error("You cannot use both --start-delay and --live-from at the same time.")
             return 1
         parse_start_delay(di, args.start_delay)
 
-    di.LiveFromVal = args.live_from or ""
+    di.live_from_val = args.live_from or ""
 
     if args.capture_duration:
         parse_capture_duration(di, args.capture_duration)
 
     # If not a direct Google Video URL, get video info
-    if not di.GVideoDDL and not get_video_info(di):
+    if not di.g_video_ddl and not get_video_info(di):
         return 1
 
     # Parse live-from
-    if di.LiveFromVal:
+    if di.live_from_val:
         parse_live_from_str(di)
 
     # Initialize download states
-    di.DLState[AUDIO_ITAG] = DownloadState()
-    di.DLState[di.Quality] = DownloadState()
+    di.dl_state[AUDIO_ITAG] = DownloadState()
+    di.dl_state[di.quality] = DownloadState()
 
     # Set up output paths
     try:
-        full_fpath = Path(FormatFilename(fname_format, di.FormatInfo, lookalike_chars))
+        full_fpath = Path(format_filename(fname_format, di.format_info, lookalike_chars))
     except Exception as e:
-        LogError("Error formatting filename: %s", str(e))
+        log_error("Error formatting filename: %s", str(e))
         return 1
 
     fdir = full_fpath.parent.resolve()
@@ -314,8 +314,8 @@ def run(args: argparse.Namespace) -> int:
         fname = "_" + fname
 
     if fname == "." or not fname.strip():
-        LogError("Output file name appears to be empty after formatting.")
-        LogError("Expanded output file path: %s", full_fpath)
+        log_error("Output file name appears to be empty after formatting.")
+        log_error("Expanded output file path: %s", full_fpath)
         return 1
 
     # Temporary directory
@@ -330,29 +330,29 @@ def run(args: argparse.Namespace) -> int:
     # Base path for fragments
     base_path = tmp_dir / fname
 
-    di.SetBaseFilePath(DTYPE_AUDIO, f"{base_path}.f{AUDIO_ITAG}")
-    di.SetBaseFilePath(DTYPE_VIDEO, f"{base_path}.f{di.Quality}")
+    di.set_base_file_path(DTYPE_AUDIO, f"{base_path}.f{AUDIO_ITAG}")
+    di.set_base_file_path(DTYPE_VIDEO, f"{base_path}.f{di.quality}")
 
     # Set state files
-    audio_state_file = str(tmp_dir / f"{di.VideoID}.f{AUDIO_ITAG}.state")
-    video_state_file = str(tmp_dir / f"{di.VideoID}.f{di.Quality}.state")
-    if AUDIO_ITAG in di.DLState:
-        di.DLState[AUDIO_ITAG].File = audio_state_file
-        di.DLState[AUDIO_ITAG].TempDir = str(tmp_dir)
-    if di.Quality in di.DLState:
-        di.DLState[di.Quality].File = video_state_file
-        di.DLState[di.Quality].TempDir = str(tmp_dir)
+    audio_state_file = str(tmp_dir / f"{di.video_id}.f{AUDIO_ITAG}.state")
+    video_state_file = str(tmp_dir / f"{di.video_id}.f{di.quality}.state")
+    if AUDIO_ITAG in di.dl_state:
+        di.dl_state[AUDIO_ITAG].file_path = audio_state_file
+        di.dl_state[AUDIO_ITAG].temp_dir = str(tmp_dir)
+    if di.quality in di.dl_state:
+        di.dl_state[di.quality].file_path = video_state_file
+        di.dl_state[di.quality].temp_dir = str(tmp_dir)
 
     # Load existing state for resume
-    if not di.DisableSaveState:
-        di.LoadState(AUDIO_ITAG)
-        di.LoadState(di.Quality)
+    if not di.disable_save_state:
+        di.load_state(AUDIO_ITAG)
+        di.load_state(di.quality)
 
     # File paths
     afile = tmp_dir / f"{fname}.f{AUDIO_ITAG}.ts"
-    vfile = tmp_dir / f"{fname}.f{di.Quality}.ts"
+    vfile = tmp_dir / f"{fname}.f{di.quality}.ts"
     final_audio_file = fdir / f"{fname}.f{AUDIO_ITAG}.ts"
-    final_video_file = fdir / f"{fname}.f{di.Quality}.ts"
+    final_video_file = fdir / f"{fname}.f{di.quality}.ts"
     thmbnl_file = tmp_dir / f"{fname}.jpg"
     final_thumbnail = fdir / f"{fname}.jpg"
     desc_file = tmp_dir / f"{fname}.description"
@@ -361,16 +361,16 @@ def run(args: argparse.Namespace) -> int:
     final_mux_file = fdir / f"{fname}.ffmpeg.txt"
 
     # Write thumbnail and description
-    if args.write_thumbnail and di.Thumbnail:
-        LogGeneral("Downloading thumbnail...")
-        DownloadThumbnail(di.Thumbnail, thmbnl_file, di.FileMode)
+    if args.write_thumbnail and di.thumbnail:
+        log_general("Downloading thumbnail...")
+        download_thumbnail(di.thumbnail, thmbnl_file, di.file_mode)
 
     if args.write_description:
         try:
             with open(desc_file, "w", encoding="utf-8") as f:
-                f.write(di.FormatInfo.get("description", ""))
+                f.write(di.format_info.get("description", ""))
         except Exception as e:
-            LogWarn("Failed to write description file: %s", str(e))
+            log_warn("Failed to write description file: %s", str(e))
 
     # Start downloads
     progress_queue = queue.Queue()
@@ -378,8 +378,8 @@ def run(args: argparse.Namespace) -> int:
     active_downloads = 0
     cancelled = False
 
-    if not di.VideoOnly and di.GetDownloadUrl(DTYPE_AUDIO):
-        LogInfo("Starting audio download to %s", afile)
+    if not di.video_only and di.get_download_url(DTYPE_AUDIO):
+        log_info("Starting audio download to %s", afile)
         done_event = threading.Event()
         dl_done_events.append(done_event)
         active_downloads += 1
@@ -390,8 +390,8 @@ def run(args: argparse.Namespace) -> int:
         )
         t.start()
 
-    if not di.AudioOnly and di.GetDownloadUrl(DTYPE_VIDEO):
-        LogInfo("Starting video download to %s", vfile)
+    if not di.audio_only and di.get_download_url(DTYPE_VIDEO):
+        log_info("Starting video download to %s", vfile)
         done_event = threading.Event()
         dl_done_events.append(done_event)
         active_downloads += 1
@@ -403,8 +403,8 @@ def run(args: argparse.Namespace) -> int:
         t.start()
 
     if active_downloads == 0:
-        LogError("Neither audio nor video downloads were started.")
-        LogError("Make sure you did not have both --no-video and --no-audio set.")
+        log_error("Neither audio nor video downloads were started.")
+        log_error("Make sure you did not have both --no-video and --no-audio set.")
         if tmp_dir != fdir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return 1
@@ -415,12 +415,12 @@ def run(args: argparse.Namespace) -> int:
     def sig_handler(signum, frame):
         if not sig_received[0]:
             sig_received[0] = True
-            di.Stop()
+            di.stop()
             nonlocal cancelled
             cancelled = True
             sys.stderr.write("\n")
             sys.stderr.flush()
-            LogWarn("User Interrupt, Stopping download...")
+            log_warn("User Interrupt, Stopping download...")
 
     original_sigint = signal.signal(signal.SIGINT, sig_handler)
 
@@ -439,28 +439,28 @@ def run(args: argparse.Namespace) -> int:
                     dl_done_events.remove(ev)
             continue
 
-        if progress.Itag in di.DLState:
-            di.DLState[progress.Itag].Size += progress.ByteCount
-            di.DLState[progress.Itag].Fragments += 1
-        total_bytes += progress.ByteCount
-        di.SaveState(progress.Itag)
+        if progress.itag in di.dl_state:
+            di.dl_state[progress.itag].size += progress.byte_count
+            di.dl_state[progress.itag].fragments += 1
+        total_bytes += progress.byte_count
+        di.save_state(progress.itag)
 
-        if progress.MaxSeq > max_seq:
-            max_seq = progress.MaxSeq
+        if progress.max_seq > max_seq:
+            max_seq = progress.max_seq
 
         status = "\r" if not _u.status_newlines else ""
-        video_frags = di.DLState.get(di.Quality, DownloadState()).Fragments
-        audio_frags = di.DLState.get(AUDIO_ITAG, DownloadState()).Fragments
+        video_frags = di.dl_state.get(di.quality, DownloadState()).fragments
+        audio_frags = di.dl_state.get(AUDIO_ITAG, DownloadState()).fragments
         status += f"Video Fragments: {video_frags}; Audio Fragments: {audio_frags}; "
         if args.verbose:
-            status += f"Max Fragments: {max_seq - progress.StartFrag if max_seq > -1 else '?'}; Max Sequence: {max_seq}; "
-        status += f"Total Downloaded: {FormatSize(total_bytes)}"
+            status += f"Max Fragments: {max_seq - progress.start_frag if max_seq > -1 else '?'}; Max Sequence: {max_seq}; "
+        status += f"Total Downloaded: {format_size(total_bytes)}"
         if _u.status_newlines:
             status += "\n"
         else:
             status += "\033[K"
 
-        di.SetStatus(status)
+        di.set_status(status)
         sys.stderr.write(status)
         sys.stderr.flush()
 
@@ -477,7 +477,7 @@ def run(args: argparse.Namespace) -> int:
     if cancelled:
         merge = False
         if merge_on_cancel == ACTION_ASK:
-            merge = GetYesNo("\nDownload stopped prematurely. Would you like to merge the currently downloaded data?")
+            merge = get_yes_no("\nDownload stopped prematurely. Would you like to merge the currently downloaded data?")
         elif merge_on_cancel == ACTION_DO:
             merge = True
 
@@ -486,63 +486,63 @@ def run(args: argparse.Namespace) -> int:
             save_state = False
 
             if save_files_on_cancel == ACTION_ASK:
-                save_files = GetYesNo("\nWould you like to save any created files?")
+                save_files = get_yes_no("\nWould you like to save any created files?")
             elif save_files_on_cancel == ACTION_DO:
                 save_files = True
 
             if not save_files:
                 if save_state_on_cancel == ACTION_ASK:
-                    save_state = GetYesNo("\nWould you like to leave files to resume downloading later?")
+                    save_state = get_yes_no("\nWould you like to leave files to resume downloading later?")
                 elif save_state_on_cancel == ACTION_DO:
                     save_state = True
 
             if save_files:
-                TryMove(afile, final_audio_file)
-                TryMove(vfile, final_video_file)
-                TryMove(thmbnl_file, final_thumbnail)
-                TryMove(desc_file, final_desc_file)
+                try_move(afile, final_audio_file)
+                try_move(vfile, final_video_file)
+                try_move(thmbnl_file, final_thumbnail)
+                try_move(desc_file, final_desc_file)
 
-                if not di.DisableSaveState:
-                    for state in di.DLState.values():
-                        TryDelete(state.File)
+                if not di.disable_save_state:
+                    for state in di.dl_state.values():
+                        try_delete(state.file_path)
 
                 if tmp_dir != fdir:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
             elif not save_state:
                 if tmp_dir != fdir:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
-                if not di.DisableSaveState:
-                    for state in di.DLState.values():
-                        TryDelete(state.File)
+                if not di.disable_save_state:
+                    for state in di.dl_state.values():
+                        try_delete(state.file_path)
 
             return 2
 
     # Download completed normally
-    if not di.DisableSaveState:
-        for state in di.DLState.values():
-            TryDelete(state.File)
+    if not di.disable_save_state:
+        for state in di.dl_state.values():
+            try_delete(state.file_path)
 
     if _u.loglevel > LOGLEVEL_QUIET:
         sys.stderr.write("\n")
         sys.stderr.flush()
 
-    LogGeneral("Download Finished")
+    log_general("Download Finished")
 
     # Warn if fragment counts mismatch
-    audio_frags = di.DLState.get(AUDIO_ITAG, DownloadState()).Fragments
-    video_frags = di.DLState.get(di.Quality, DownloadState()).Fragments
-    if not di.AudioOnly and not di.VideoOnly and audio_frags != video_frags:
-        LogWarn("Mismatched number of video and audio fragments.")
-        LogWarn("The files should still be mergeable but data might be missing.")
+    audio_frags = di.dl_state.get(AUDIO_ITAG, DownloadState()).fragments
+    video_frags = di.dl_state.get(di.quality, DownloadState()).fragments
+    if not di.audio_only and not di.video_only and audio_frags != video_frags:
+        log_warn("Mismatched number of video and audio fragments.")
+        log_warn("The files should still be mergeable but data might be missing.")
 
     # Move files from tmp to final
     moves_ok = True
     for err in [
-        TryMove(afile, final_audio_file),
-        TryMove(vfile, final_video_file),
-        TryMove(thmbnl_file, final_thumbnail),
-        TryMove(desc_file, final_desc_file),
-        TryMove(mux_file, final_mux_file),
+        try_move(afile, final_audio_file),
+        try_move(vfile, final_video_file),
+        try_move(thmbnl_file, final_thumbnail),
+        try_move(desc_file, final_desc_file),
+        try_move(mux_file, final_mux_file),
     ]:
         if err:
             moves_ok = False
@@ -554,18 +554,18 @@ def run(args: argparse.Namespace) -> int:
         files_to_del.append(final_thumbnail)
 
     # Build ffmpeg args
-    ffmpeg_args = GetFFmpegArgs(
+    ffmpeg_args = get_ffmpeg_args(
         audio_file=final_audio_file,
         video_file=final_video_file,
         thumbnail=final_thumbnail,
         file_dir=fdir,
         file_name=fname,
-        only_audio=di.AudioOnly,
-        only_video=di.VideoOnly,
-        download_thumbnail=args.write_thumbnail and Exists(final_thumbnail),
+        only_audio=di.audio_only,
+        only_video=di.video_only,
+        download_thumbnail=args.write_thumbnail and exists(final_thumbnail),
         mkv=args.mkv,
         add_meta=args.add_metadata,
-        metadata=di.Metadata,
+        metadata=di.metadata,
     )
 
     # Write mux command file
@@ -574,10 +574,10 @@ def run(args: argparse.Namespace) -> int:
             with open(final_mux_file, "w") as mf:
                 mf.write(f"{args.ffmpeg_path} {' '.join(ffmpeg_args['args'])}\n")
         except Exception as e:
-            LogWarn("Failed to write mux file: %s", str(e))
+            log_warn("Failed to write mux file: %s", str(e))
 
         if not moves_ok:
-            LogError("At least one error occurred when moving files. Will not delete them.")
+            log_error("At least one error occurred when moving files. Will not delete them.")
         elif tmp_dir != fdir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return 0
@@ -585,25 +585,25 @@ def run(args: argparse.Namespace) -> int:
     # Check ffmpeg availability
     ffmpeg_path = args.ffmpeg_path
     if not shutil.which(ffmpeg_path):
-        LogError("%s not found. Please install ffmpeg or provide a location using --ffmpeg-path", ffmpeg_path)
+        log_error("%s not found. Please install ffmpeg or provide a location using --ffmpeg-path", ffmpeg_path)
         if not moves_ok:
-            LogError("At least one error occurred when moving files. Will not delete them.")
+            log_error("At least one error occurred when moving files. Will not delete them.")
         elif tmp_dir != fdir:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return 1
 
     # Mux with ffmpeg
-    LogGeneral("Muxing final file...")
-    retcode = Execute(ffmpeg_path, ffmpeg_args["args"])
+    log_general("Muxing final file...")
+    retcode = execute(ffmpeg_path, ffmpeg_args["args"])
     if retcode != 0:
-        LogError("Execute returned code %d. Something must have gone wrong with ffmpeg.", retcode)
-        LogError("The .ts files will not be deleted in case the final file is broken.")
-        LogError("Finally, the ffmpeg command was either written to a file or output above.")
+        log_error("Execute returned code %d. Something must have gone wrong with ffmpeg.", retcode)
+        log_error("The .ts files will not be deleted in case the final file is broken.")
+        log_error("Finally, the ffmpeg command was either written to a file or output above.")
 
     # Separate audio
     if args.separate_audio:
-        LogGeneral("Creating separate audio file...")
-        audio_ffmpeg_args = GetFFmpegArgs(
+        log_general("Creating separate audio file...")
+        audio_ffmpeg_args = get_ffmpeg_args(
             audio_file=final_audio_file,
             video_file="",
             thumbnail="",
@@ -614,27 +614,27 @@ def run(args: argparse.Namespace) -> int:
             download_thumbnail=False,
             mkv=False,
             add_meta=args.add_metadata,
-            metadata=di.Metadata,
+            metadata=di.metadata,
         )
-        a_retcode = Execute(ffmpeg_path, audio_ffmpeg_args["args"])
+        a_retcode = execute(ffmpeg_path, audio_ffmpeg_args["args"])
         if a_retcode != 0:
             retcode = a_retcode
-            LogError("Execute returned code %d. Something must have gone wrong with ffmpeg.", retcode)
-            LogError("The .ts files will not be deleted in case the final file is broken.")
+            log_error("Execute returned code %d. Something must have gone wrong with ffmpeg.", retcode)
+            log_error("The .ts files will not be deleted in case the final file is broken.")
 
     if not moves_ok:
-        LogError("At least one error occurred when moving files. Will not delete them.")
+        log_error("At least one error occurred when moving files. Will not delete them.")
     elif tmp_dir != fdir:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if retcode != 0:
         return retcode
 
-    CleanupFiles(files_to_del)
+    cleanup_files(files_to_del)
 
-    LogGeneral("%sFinal file: %s%s", "\n", ffmpeg_args["file_name"], "\n")
+    log_general("%sFinal file: %s%s", "\n", ffmpeg_args["file_name"], "\n")
     if args.separate_audio:
-        LogGeneral("%sFinal audio file: %s%s", "\n", audio_ffmpeg_args["file_name"], "\n")
+        log_general("%sFinal audio file: %s%s", "\n", audio_ffmpeg_args["file_name"], "\n")
 
     return 0
 
@@ -657,7 +657,7 @@ def main():
         for m in args.metadata:
             if "=" in m:
                 key, value = m.split("=", 1)
-                di_temp.Metadata[key.strip()] = value.strip()
+                di_temp.metadata[key.strip()] = value.strip()
 
     # Monitor channel loop
     if args.monitor_channel:
