@@ -1,5 +1,5 @@
 import argparse
-import os
+from pathlib import Path
 import queue
 import shutil
 import signal
@@ -300,21 +300,15 @@ def run(args: argparse.Namespace) -> int:
 
     # Set up output paths
     try:
-        full_fpath = FormatFilename(fname_format, di.FormatInfo, lookalike_chars)
+        full_fpath = Path(FormatFilename(fname_format, di.FormatInfo, lookalike_chars))
     except Exception as e:
         LogError("Error formatting filename: %s", str(e))
         return 1
 
-    fdir = os.path.dirname(full_fpath)
-    if fdir and not os.path.isabs(fdir):
-        fdir = fdir.lstrip(os.sep)
-    if not fdir or not fdir.strip():
-        fdir = "."
+    fdir = full_fpath.parent.resolve()
+    fdir.mkdir(parents=True, exist_ok=True)
 
-    fdir = os.path.abspath(fdir)
-    os.makedirs(fdir, exist_ok=True)
-
-    fname = os.path.basename(full_fpath)
+    fname = full_fpath.name
     fname = fname.lstrip()
     if fname.startswith("-"):
         fname = "_" + fname
@@ -327,27 +321,27 @@ def run(args: argparse.Namespace) -> int:
     # Temporary directory
     tmp_dir = args.temporary_dir or ""
     if tmp_dir:
-        tmp_dir = os.path.abspath(tmp_dir)
+        tmp_dir = Path(tmp_dir).resolve()
     else:
-        tmp_dir = tempfile.mkdtemp(prefix="ytarchive_", dir=fdir)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="ytarchive_", dir=fdir))
 
-    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
 
     # Base path for fragments
-    base_path = os.path.join(tmp_dir, fname)
+    base_path = tmp_dir / fname
 
     di.SetBaseFilePath(DTYPE_AUDIO, f"{base_path}.f{AUDIO_ITAG}")
     di.SetBaseFilePath(DTYPE_VIDEO, f"{base_path}.f{di.Quality}")
 
     # Set state files
-    audio_state_file = os.path.join(tmp_dir, f"{di.VideoID}.f{AUDIO_ITAG}.state")
-    video_state_file = os.path.join(tmp_dir, f"{di.VideoID}.f{di.Quality}.state")
+    audio_state_file = str(tmp_dir / f"{di.VideoID}.f{AUDIO_ITAG}.state")
+    video_state_file = str(tmp_dir / f"{di.VideoID}.f{di.Quality}.state")
     if AUDIO_ITAG in di.DLState:
         di.DLState[AUDIO_ITAG].File = audio_state_file
-        di.DLState[AUDIO_ITAG].TempDir = tmp_dir
+        di.DLState[AUDIO_ITAG].TempDir = str(tmp_dir)
     if di.Quality in di.DLState:
         di.DLState[di.Quality].File = video_state_file
-        di.DLState[di.Quality].TempDir = tmp_dir
+        di.DLState[di.Quality].TempDir = str(tmp_dir)
 
     # Load existing state for resume
     if not di.DisableSaveState:
@@ -355,16 +349,16 @@ def run(args: argparse.Namespace) -> int:
         di.LoadState(di.Quality)
 
     # File paths
-    afile = os.path.join(tmp_dir, f"{fname}.f{AUDIO_ITAG}.ts")
-    vfile = os.path.join(tmp_dir, f"{fname}.f{di.Quality}.ts")
-    final_audio_file = os.path.join(fdir, f"{fname}.f{AUDIO_ITAG}.ts")
-    final_video_file = os.path.join(fdir, f"{fname}.f{di.Quality}.ts")
-    thmbnl_file = os.path.join(tmp_dir, f"{fname}.jpg")
-    final_thumbnail = os.path.join(fdir, f"{fname}.jpg")
-    desc_file = os.path.join(tmp_dir, f"{fname}.description")
-    final_desc_file = os.path.join(fdir, f"{fname}.description")
-    mux_file = os.path.join(tmp_dir, f"{fname}.ffmpeg.txt")
-    final_mux_file = os.path.join(fdir, f"{fname}.ffmpeg.txt")
+    afile = tmp_dir / f"{fname}.f{AUDIO_ITAG}.ts"
+    vfile = tmp_dir / f"{fname}.f{di.Quality}.ts"
+    final_audio_file = fdir / f"{fname}.f{AUDIO_ITAG}.ts"
+    final_video_file = fdir / f"{fname}.f{di.Quality}.ts"
+    thmbnl_file = tmp_dir / f"{fname}.jpg"
+    final_thumbnail = fdir / f"{fname}.jpg"
+    desc_file = tmp_dir / f"{fname}.description"
+    final_desc_file = fdir / f"{fname}.description"
+    mux_file = tmp_dir / f"{fname}.ffmpeg.txt"
+    final_mux_file = fdir / f"{fname}.ffmpeg.txt"
 
     # Write thumbnail and description
     if args.write_thumbnail and di.Thumbnail:

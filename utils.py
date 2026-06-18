@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import shutil
 import struct
 import sys
@@ -174,7 +174,7 @@ def DownloadThumbnail(url: str, fname: str, file_mode: int = 0o644) -> bool:
         with open(fname, "wb") as f:
             f.write(resp.content)
         if file_mode:
-            os.chmod(fname, file_mode)
+            Path(fname).chmod(file_mode)
         return True
     except Exception as e:
         LogWarn("Failed to download thumbnail: %v", str(e))
@@ -260,7 +260,7 @@ def FormatFilename(format_str: str, vals: dict, lookalike_chars: bool = False) -
         raise KeyError(f"Unknown output format key: {e}")
 
     # Check filename length
-    fname = os.path.basename(result)
+    fname = Path(result).name
     if len(fname.encode("utf-8")) > MAX_FILENAME_LENGTH:
         LogWarn("Formatted filename is too long. Truncating the title to try and fix.")
         bytes_over = len(fname.encode("utf-8")) - MAX_FILENAME_LENGTH
@@ -322,34 +322,34 @@ def RemoveAtoms(data: bytearray, *atom_names: str) -> bytearray:
 
 def Exists(filepath: str) -> bool:
     """Check if a file exists."""
-    return os.path.exists(filepath)
+    return Path(filepath).exists()
 
 
 def TryDelete(fname: str):
     """Try to delete a file, ignoring if it doesn't exist."""
     try:
-        if os.path.exists(fname):
+        if Path(fname).exists():
             LogInfo("Deleting file %s", fname)
-            os.remove(fname)
+            Path(fname).unlink()
     except OSError as e:
         LogWarn("Error deleting file: %s", str(e))
 
 
 def TryMove(src: str, dst: str) -> Optional[Exception]:
     """Try to rename/move a file. Falls back to copy+delete. Returns error or None."""
-    if not os.path.exists(src):
+    if not Path(src).exists():
         return None
 
     LogInfo("Moving file %s to %s", src, dst)
     try:
-        os.rename(src, dst)
+        Path(src).rename(dst)
         return None
     except OSError as e:
         LogWarn("Error moving file: %s", str(e))
         LogWarn("Attempting to copy file instead")
         try:
             shutil.copy2(src, dst)
-            os.remove(src)
+            Path(src).unlink()
             return None
         except OSError as e2:
             LogWarn("Error copying file: %s", str(e2))
@@ -617,10 +617,10 @@ def GetFFmpegArgs(audio_file: str, video_file: str, thumbnail: str,
 
     # Find a non-conflicting output filename
     merge_counter = 0
-    merge_file = os.path.join(file_dir, f"{file_name}.{ext}")
-    while os.path.exists(merge_file) and merge_counter < 10:
+    merge_file = Path(file_dir) / f"{file_name}.{ext}"
+    while merge_file.exists() and merge_counter < 10:
         merge_counter += 1
-        merge_file = os.path.join(file_dir, f"{file_name}-{merge_counter}.{ext}")
+        merge_file = Path(file_dir) / f"{file_name}-{merge_counter}.{ext}"
 
     if not only_video:
         ffmpeg_args.extend([
@@ -674,7 +674,7 @@ def Execute(prog: str, args: list) -> int:
     """Execute an external process. Returns exit code."""
     import subprocess
 
-    LogDebug("Executing command: %s %s", prog, " ".join(args))
+    LogDebug("Executing command: %s %s", prog, " ".join(map(str, args)))
 
     try:
         result = subprocess.run(

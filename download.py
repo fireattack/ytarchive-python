@@ -1,7 +1,7 @@
 import json
 import math
-import os
 import re
+from pathlib import Path
 import subprocess
 import threading
 import time
@@ -395,7 +395,7 @@ class DownloadInfo:
         if itag not in self.DLState:
             return False
         state = self.DLState[itag]
-        if not state.File or not os.path.exists(state.File):
+        if not state.File or not Path(state.File).exists():
             return False
         try:
             with open(state.File, "r") as f:
@@ -1602,7 +1602,7 @@ def download_stream(di: DownloadInfo, data_type: str, data_file: str,
 
                 if di.FragFiles:
                     try:
-                        os.remove(data.FileName)
+                        Path(data.FileName).unlink()
                     except OSError as e:
                         LogWarn("%s: Error deleting fragment %d: %s", log_name, data.Seq, str(e))
                         LogWarn("%s: Will try again after the download has finished", log_name)
